@@ -403,77 +403,47 @@ def build_graph():
                 # 创建图谱构建服务
                 builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
                 
-                # 分块
-                task_manager.update_task(
-                    task_id,
-                    message="文本分块中...",
-                    progress=5
-                )
-                chunks = TextProcessor.split_text(
-                    graph_source_text,
-                    chunk_size=chunk_size, 
-                    overlap=chunk_overlap
-                )
-                total_chunks = len(chunks)
-                
                 # 创建图谱
                 task_manager.update_task(
                     task_id,
-                    message="创建Zep图谱...",
+                    message="Creating graph...",
                     progress=10
                 )
                 graph_id = builder.create_graph(name=graph_name)
-                
+
                 # 更新项目的graph_id
                 project.graph_id = graph_id
                 ProjectManager.save_project(project)
-                
+
                 # 设置本体
                 task_manager.update_task(
                     task_id,
-                    message="设置本体定义...",
+                    message="Storing ontology...",
                     progress=15
                 )
                 builder.set_ontology(graph_id, ontology)
-                
-                # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
-                def add_progress_callback(msg, progress_ratio):
-                    progress = 15 + int(progress_ratio * 40)  # 15% - 55%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-                
-                task_manager.update_task(
-                    task_id,
-                    message=f"开始添加 {total_chunks} 个文本块...",
-                    progress=15
-                )
-                
-                episode_uuids = builder.add_text_batches(
-                    graph_id, 
-                    chunks,
+
+                # 实体提取 + 存储 (progress 15% → 90%)
+                from ..services.local_graph import ingest_text_to_graph
+                from ..utils.llm_client import LLMClient
+
+                def ingest_progress_callback(msg, progress_ratio):
+                    progress = 15 + int(progress_ratio * 75)
+                    task_manager.update_task(task_id, message=msg, progress=progress)
+
+                llm = LLMClient.from_cheap_config() or LLMClient()
+                stats = ingest_text_to_graph(
+                    graph_id=graph_id,
+                    text=graph_source_text,
+                    ontology=ontology,
+                    llm=llm,
+                    local_graph=builder.local_graph,
+                    progress_callback=ingest_progress_callback,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
                     batch_size=3,
-                    progress_callback=add_progress_callback
                 )
-                
-                # 等待Zep处理完成（查询每个episode的processed状态）
-                task_manager.update_task(
-                    task_id,
-                    message="等待Zep处理数据...",
-                    progress=55
-                )
-                
-                def wait_progress_callback(msg, progress_ratio):
-                    progress = 55 + int(progress_ratio * 35)  # 55% - 90%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-                
-                builder._wait_for_episodes(episode_uuids, wait_progress_callback)
+                total_chunks = stats["chunks_processed"]
                 
                 # 获取图谱数据
                 task_manager.update_task(
