@@ -56,6 +56,11 @@ export const requestWithRetry = async (requestFn, maxRetries = 3, delay = 1000) 
     try {
       return await requestFn()
     } catch (error) {
+      const isNetworkError = !error.response
+      const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
+      const shouldRetry = isNetworkError || isTimeout
+
+      if (!shouldRetry) throw error
       if (i === maxRetries - 1) throw error
       
       console.warn(`Request failed, retrying (${i + 1}/${maxRetries})...`)

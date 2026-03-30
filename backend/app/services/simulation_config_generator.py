@@ -16,9 +16,8 @@ from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from openai import OpenAI
-
 from ..config import Config
+from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
@@ -214,30 +213,34 @@ class SimulationConfigGenerator:
     # 每批生成的Agent数量
     AGENTS_PER_BATCH = 15
     
-    # 各步骤的上下文截断长度（字符数）
-    TIME_CONFIG_CONTEXT_LENGTH = 10000   # 时间配置
-    EVENT_CONFIG_CONTEXT_LENGTH = 8000   # 事件配置
-    ENTITY_SUMMARY_LENGTH = 300          # 实体摘要
-    AGENT_SUMMARY_LENGTH = 300           # Agent配置中的实体摘要
-    ENTITIES_PER_TYPE_DISPLAY = 20       # 每类实体显示数量
+    # 各步骤的上下文截断长度（字符数）- reduced for token efficiency
+    TIME_CONFIG_CONTEXT_LENGTH = 6000    # 时间配置
+    EVENT_CONFIG_CONTEXT_LENGTH = 5000   # 事件配置
+    ENTITY_SUMMARY_LENGTH = 150          # 实体摘要
+    AGENT_SUMMARY_LENGTH = 150           # Agent配置中的实体摘要
+    ENTITIES_PER_TYPE_DISPLAY = 10       # 每类实体显示数量
     
     def __init__(
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        llm_client: Optional[LLMClient] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model_name = model_name or Config.LLM_MODEL_NAME
-        
-        if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
-        
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        # Use provided client, or try cheap model (sim config is mechanical),
+        # or fall back to explicit params / default
+        if llm_client:
+            self.llm = llm_client
+        else:
+            cheap = LLMClient.from_cheap_config()
+            if cheap:
+                self.llm = cheap
+            else:
+                self.llm = LLMClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model_name
+                )
     
     def generate_config(
         self,
@@ -368,8 +371,8 @@ class SimulationConfigGenerator:
             event_config=event_config,
             twitter_config=twitter_config,
             reddit_config=reddit_config,
-            llm_model=self.model_name,
-            llm_base_url=self.base_url,
+            llm_model=self.llm.model,
+            llm_base_url=self.llm.base_url,
             generation_reasoning=" | ".join(reasoning_parts)
         )
         
@@ -431,53 +434,18 @@ class SimulationConfigGenerator:
         return "\n".join(lines)
     
     def _call_llm_with_retry(self, prompt: str, system_prompt: str) -> Dict[str, Any]:
-        """带重试的LLM调用，包含JSON修复逻辑"""
-        import re
-        
-        max_attempts = 3
-        last_error = None
-        
-        for attempt in range(max_attempts):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
-                    # 不设置max_tokens，让LLM自由发挥
-                )
-                
-                content = response.choices[0].message.content
-                finish_reason = response.choices[0].finish_reason
-                
-                # 检查是否被截断
-                if finish_reason == 'length':
-                    logger.warning(f"LLM输出被截断 (attempt {attempt+1})")
-                    content = self._fix_truncated_json(content)
-                
-                # 尝试解析JSON
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"JSON解析失败 (attempt {attempt+1}): {str(e)[:80]}")
-                    
-                    # 尝试修复JSON
-                    fixed = self._try_fix_config_json(content)
-                    if fixed:
-                        return fixed
-                    
-                    last_error = e
-                    
-            except Exception as e:
-                logger.warning(f"LLM调用失败 (attempt {attempt+1}): {str(e)[:80]}")
-                last_error = e
-                import time
-                time.sleep(2 * (attempt + 1))
-        
-        raise last_error or Exception("LLM调用失败")
+        """Single LLM call — _create_completion already handles transient retries."""
+        result = self.llm.chat_json(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2048
+        )
+        if not result:
+            raise ValueError("LLM returned empty response")
+        return result
     
     def _fix_truncated_json(self, content: str) -> str:
         """修复被截断的JSON"""
@@ -539,50 +507,14 @@ class SimulationConfigGenerator:
         # 计算最大允许值（80%的agent数）
         max_agents_allowed = max(1, int(num_entities * 0.9))
         
-        prompt = f"""基于以下模拟需求，生成时间模拟配置。
-
+        prompt = f"""模拟需求:
 {context_truncated}
 
-## 任务
-请生成时间配置JSON。
+生成时间配置JSON。中国人作息(凌晨低/早间渐增/工作中等/晚间高峰)，根据事件和群体调整。
+agents_per_hour范围: 1-{max_agents_allowed}
 
-### 基本原则（仅供参考，需根据具体事件和参与群体灵活调整）：
-- 用户群体为中国人，需符合北京时间作息习惯
-- 凌晨0-5点几乎无人活动（活跃度系数0.05）
-- 早上6-8点逐渐活跃（活跃度系数0.4）
-- 工作时间9-18点中等活跃（活跃度系数0.7）
-- 晚间19-22点是高峰期（活跃度系数1.5）
-- 23点后活跃度下降（活跃度系数0.5）
-- 一般规律：凌晨低活跃、早间渐增、工作时段中等、晚间高峰
-- **重要**：以下示例值仅供参考，你需要根据事件性质、参与群体特点来调整具体时段
-  - 例如：学生群体高峰可能是21-23点；媒体全天活跃；官方机构只在工作时间
-  - 例如：突发热点可能导致深夜也有讨论，off_peak_hours 可适当缩短
-
-### 返回JSON格式（不要markdown）
-
-示例：
-{{
-    "total_simulation_hours": 72,
-    "minutes_per_round": 60,
-    "agents_per_hour_min": 5,
-    "agents_per_hour_max": 50,
-    "peak_hours": [19, 20, 21, 22],
-    "off_peak_hours": [0, 1, 2, 3, 4, 5],
-    "morning_hours": [6, 7, 8],
-    "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    "reasoning": "针对该事件的时间配置说明"
-}}
-
-字段说明：
-- total_simulation_hours (int): 模拟总时长，24-168小时，突发事件短、持续话题长
-- minutes_per_round (int): 每轮时长，30-120分钟，建议60分钟
-- agents_per_hour_min (int): 每小时最少激活Agent数（取值范围: 1-{max_agents_allowed}）
-- agents_per_hour_max (int): 每小时最多激活Agent数（取值范围: 1-{max_agents_allowed}）
-- peak_hours (int数组): 高峰时段，根据事件参与群体调整
-- off_peak_hours (int数组): 低谷时段，通常深夜凌晨
-- morning_hours (int数组): 早间时段
-- work_hours (int数组): 工作时段
-- reasoning (string): 简要说明为什么这样配置"""
+返回JSON:
+{{"total_simulation_hours":72,"minutes_per_round":60,"agents_per_hour_min":5,"agents_per_hour_max":50,"peak_hours":[19,20,21,22],"off_peak_hours":[0,1,2,3,4,5],"morning_hours":[6,7,8],"work_hours":[9,10,11,12,13,14,15,16,17,18],"reasoning":"说明"}}"""
 
         system_prompt = "你是社交媒体模拟专家。返回纯JSON格式，时间配置需符合中国人作息习惯。"
         
@@ -827,40 +759,15 @@ class SimulationConfigGenerator:
                 "summary": e.summary[:summary_len] if e.summary else ""
             })
         
-        prompt = f"""基于以下信息，为每个实体生成社交媒体活动配置。
+        prompt = f"""模拟需求: {simulation_requirement}
 
-模拟需求: {simulation_requirement}
+实体列表:
+{json.dumps(entity_list, ensure_ascii=False)}
 
-## 实体列表
-```json
-{json.dumps(entity_list, ensure_ascii=False, indent=2)}
-```
+为每个实体生成活动配置。中国人作息，官方机构低活跃高影响力，媒体中活跃快响应，个人高活跃低影响力。
 
-## 任务
-为每个实体生成活动配置，注意：
-- **时间符合中国人作息**：凌晨0-5点几乎不活动，晚间19-22点最活跃
-- **官方机构**（University/GovernmentAgency）：活跃度低(0.1-0.3)，工作时间(9-17)活动，响应慢(60-240分钟)，影响力高(2.5-3.0)
-- **媒体**（MediaOutlet）：活跃度中(0.4-0.6)，全天活动(8-23)，响应快(5-30分钟)，影响力高(2.0-2.5)
-- **个人**（Student/Person/Alumni）：活跃度高(0.6-0.9)，主要晚间活动(18-23)，响应快(1-15分钟)，影响力低(0.8-1.2)
-- **公众人物/专家**：活跃度中(0.4-0.6)，影响力中高(1.5-2.0)
-
-返回JSON格式（不要markdown）：
-{{
-    "agent_configs": [
-        {{
-            "agent_id": <必须与输入一致>,
-            "activity_level": <0.0-1.0>,
-            "posts_per_hour": <发帖频率>,
-            "comments_per_hour": <评论频率>,
-            "active_hours": [<活跃小时列表，考虑中国人作息>],
-            "response_delay_min": <最小响应延迟分钟>,
-            "response_delay_max": <最大响应延迟分钟>,
-            "sentiment_bias": <-1.0到1.0>,
-            "stance": "<supportive/opposing/neutral/observer>",
-            "influence_weight": <影响力权重>
-        }},
-        ...
-    ]
+返回JSON:
+{{"agent_configs":[{{"agent_id":0,"activity_level":0.5,"posts_per_hour":1.0,"comments_per_hour":2.0,"active_hours":[8,9,10],"response_delay_min":5,"response_delay_max":60,"sentiment_bias":0.0,"stance":"neutral","influence_weight":1.0}}]
 }}"""
 
         system_prompt = "你是社交媒体行为分析专家。返回纯JSON，配置需符合中国人作息习惯。"

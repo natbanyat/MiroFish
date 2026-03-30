@@ -296,7 +296,13 @@ class SimulationManager:
             
             if filtered.filtered_count == 0:
                 state.status = SimulationStatus.FAILED
-                state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
+                if filtered.total_count > 0 and not filtered.entity_types:
+                    state.error = (
+                        "图谱中存在节点，但没有任何实体类型标签，无法为模拟筛选主体。"
+                        "请重新构建图谱。"
+                    )
+                else:
+                    state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
                 self._save_simulation_state(state)
                 return state
             

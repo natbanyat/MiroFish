@@ -10,6 +10,14 @@
             <div class="report-meta">
               <span class="report-tag">Prediction Report</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
+              <button
+                v-if="isComplete && reportId"
+                class="download-pdf-btn"
+                :disabled="isDownloading"
+                @click="handleDownloadPdf"
+              >
+                {{ isDownloading ? 'Generating...' : 'Download PDF' }}
+              </button>
             </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
@@ -58,7 +66,7 @@
                       <path d="M12 2a10 10 0 0 1 10 10" stroke-width="4" stroke="#4B5563" stroke-linecap="round"></path>
                     </svg>
                   </div>
-                  <span class="loading-text">正在生成{{ section.title }}...</span>
+                  <span class="loading-text">Generating {{ section.title }}...</span>
                 </div>
               </div>
             </div>
@@ -129,7 +137,7 @@
 
           <!-- Next Step Button - 在完成后显示 -->
           <button v-if="isComplete" class="next-step-btn" @click="goToInteraction">
-            <span>进入深度互动</span>
+            <span>Enter Interaction</span>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="5" y1="12" x2="19" y2="12"></line>
               <polyline points="12 5 19 12 12 19"></polyline>
@@ -392,7 +400,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { getAgentLog, getConsoleLog, downloadReportPdf } from '../api/report'
 
 const router = useRouter()
 
@@ -403,6 +411,19 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add-log', 'update-status'])
+
+// PDF Download
+const handleDownloadPdf = async () => {
+  if (!props.reportId || isDownloading.value) return
+  isDownloading.value = true
+  try {
+    await downloadReportPdf(props.reportId)
+  } catch (e) {
+    console.error('PDF download failed:', e)
+  } finally {
+    isDownloading.value = false
+  }
+}
 
 // Navigation
 const goToInteraction = () => {
@@ -423,6 +444,7 @@ const expandedContent = ref(new Set())
 const expandedLogs = ref(new Set())
 const collapsedSections = ref(new Set())
 const isComplete = ref(false)
+const isDownloading = ref(false)
 const startTime = ref(null)
 const leftPanel = ref(null)
 const rightPanel = ref(null)
@@ -2382,6 +2404,32 @@ watch(() => props.reportId, (newId) => {
   color: #9CA3AF;
   font-weight: 500;
   letter-spacing: 0.02em;
+}
+
+.download-pdf-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  color: #374151;
+  background: #F9FAFB;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.download-pdf-btn:hover:not(:disabled) {
+  background: #111827;
+  color: #FFFFFF;
+  border-color: #111827;
+}
+
+.download-pdf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .main-title {

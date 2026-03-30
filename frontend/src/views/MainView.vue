@@ -15,7 +15,7 @@
             :class="{ active: viewMode === mode }"
             @click="viewMode = mode"
           >
-            {{ { graph: '图谱', split: '双栏', workbench: '工作台' }[mode] }}
+            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
           </button>
         </div>
       </div>
@@ -48,8 +48,15 @@
 
       <!-- Right Panel: Step Components -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
+        <!-- Error Banner with Retry -->
+        <div v-if="error" class="error-banner">
+          <div class="error-text">{{ error }}</div>
+          <button class="retry-btn" @click="retryLastAction" :disabled="loading">Retry</button>
+          <button class="dismiss-btn" @click="error = ''">&times;</button>
+        </div>
+
         <!-- Step 1: 图谱构建 -->
-        <Step1GraphBuild 
+        <Step1GraphBuild
           v-if="currentStep === 1"
           :currentPhase="currentPhase"
           :projectData="projectData"
@@ -91,7 +98,7 @@ const viewMode = ref('split') // graph | split | workbench
 
 // Step State
 const currentStep = ref(1) // 1: 图谱构建, 2: 环境搭建, 3: 开始模拟, 4: 报告生成, 5: 深度互动
-const stepNames = ['图谱构建', '环境搭建', '开始模拟', '报告生成', '深度互动']
+const stepNames = ['Graph Build', 'Env Setup', 'Run Simulation', 'Report', 'Interaction']
 
 // Data State
 const currentProjectId = ref(route.params.projectId)
@@ -159,11 +166,10 @@ const toggleMaximize = (target) => {
 const handleNextStep = (params = {}) => {
   if (currentStep.value < 5) {
     currentStep.value++
-    addLog(`进入 Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
-    
-    // 如果是从 Step 2 进入 Step 3，记录模拟轮数配置
+    addLog(`Entering Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
+
     if (currentStep.value === 3 && params.maxRounds) {
-      addLog(`自定义模拟轮数: ${params.maxRounds} 轮`)
+      addLog(`Custom simulation rounds: ${params.maxRounds}`)
     }
   }
 }
@@ -171,11 +177,28 @@ const handleNextStep = (params = {}) => {
 const handleGoBack = () => {
   if (currentStep.value > 1) {
     currentStep.value--
-    addLog(`返回 Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
+    addLog(`Returned to Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
   }
 }
 
 // --- Data Logic ---
+
+// Track last action for retry
+const lastAction = ref(null)
+
+const retryLastAction = async () => {
+  error.value = ''
+  if (lastAction.value === 'newProject') {
+    await handleNewProject()
+  } else if (lastAction.value === 'buildGraph') {
+    await startBuildGraph()
+  } else if (lastAction.value === 'loadProject') {
+    await loadProject()
+  } else {
+    // Default: re-init
+    await initProject()
+  }
+}
 
 const initProject = async () => {
   addLog('Project view initialized.')
@@ -187,13 +210,14 @@ const initProject = async () => {
 }
 
 const handleNewProject = async () => {
+  lastAction.value = 'newProject'
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
     error.value = 'No pending files found.'
     addLog('Error: No pending files found for new project.')
     return
   }
-  
+
   try {
     loading.value = true
     currentPhase.value = 0
@@ -227,6 +251,7 @@ const handleNewProject = async () => {
 }
 
 const loadProject = async () => {
+  lastAction.value = 'loadProject'
   try {
     loading.value = true
     addLog(`Loading project ${currentProjectId.value}...`)
@@ -269,6 +294,7 @@ const updatePhaseByStatus = (status) => {
 }
 
 const startBuildGraph = async () => {
+  lastAction.value = 'buildGraph'
   try {
     currentPhase.value = 1
     buildProgress.value = { progress: 0, message: 'Starting build...' }
@@ -405,6 +431,51 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Error banner with retry */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 8px;
+  border: 1px solid #ff3333;
+  background: #1a0000;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.error-text {
+  flex: 1;
+  color: #ff6666;
+  word-break: break-word;
+}
+
+.retry-btn {
+  padding: 5px 14px;
+  border: 1px solid #FF4500;
+  background: #FF4500;
+  color: #000;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+
+.retry-btn:hover { background: #ff6020; }
+.retry-btn:disabled { opacity: 0.5; cursor: wait; }
+
+.dismiss-btn {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.dismiss-btn:hover { color: #fff; }
+
 .main-view {
   height: 100vh;
   display: flex;

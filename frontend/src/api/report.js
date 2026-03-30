@@ -49,3 +49,21 @@ export const getReport = (reportId) => {
 export const chatWithReport = (data) => {
   return requestWithRetry(() => service.post('/api/report/chat', data), 3, 1000)
 }
+
+/**
+ * Download report as PDF (or printable HTML fallback)
+ * @param {string} reportId
+ */
+export const downloadReportPdf = async (reportId) => {
+  const response = await service.get(`/api/report/${reportId}/pdf`, { responseType: 'blob' })
+  const contentDisposition = response.headers?.['content-disposition'] || ''
+  const contentType = response.headers?.['content-type'] || 'application/octet-stream'
+  const isPdf = contentType.includes('pdf')
+  const filename = isPdf ? `${reportId}.pdf` : `${reportId}_printable.html`
+  const url = URL.createObjectURL(new Blob([response.data], { type: contentType }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}

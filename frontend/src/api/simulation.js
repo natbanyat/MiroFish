@@ -169,6 +169,14 @@ export const getEnvStatus = (data) => {
 }
 
 /**
+ * Reopen a completed/stopped simulation environment for post-hoc agent interaction
+ * @param {Object} data - { simulation_id }
+ */
+export const reopenEnv = (data) => {
+  return service.post('/api/simulation/reopen-env', data)
+}
+
+/**
  * 批量采访 Agent
  * @param {Object} data - { simulation_id, interviews: [{ agent_id, prompt }] }
  */

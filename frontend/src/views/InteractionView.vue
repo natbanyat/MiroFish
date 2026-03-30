@@ -15,7 +15,7 @@
             :class="{ active: viewMode === mode }"
             @click="viewMode = mode"
           >
-            {{ { graph: '图谱', split: '双栏', workbench: '工作台' }[mode] }}
+            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
           </button>
         </div>
       </div>
@@ -23,7 +23,7 @@
       <div class="header-right">
         <div class="workflow-step">
           <span class="step-num">Step 5/5</span>
-          <span class="step-name">深度互动</span>
+          <span class="step-name">Interaction</span>
         </div>
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -49,6 +49,17 @@
 
       <!-- Right Panel: Step5 深度互动 -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
+        <!-- Environment status banner (shown when env is closed) -->
+        <div v-if="simulationId && !envAlive && !envChecking" class="env-banner">
+          <span class="env-banner-text">Environment closed — all simulation data is saved.</span>
+          <button
+            class="env-reopen-btn"
+            :disabled="envReopening"
+            @click="reopenEnvironment"
+          >
+            {{ envReopening ? 'Reopening...' : 'Reopen for Interactions' }}
+          </button>
+        </div>
         <Step5Interaction
           :reportId="currentReportId"
           :simulationId="simulationId"
@@ -67,7 +78,7 @@ import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import { getProject, getGraphData } from '../api/graph'
-import { getSimulation } from '../api/simulation'
+import { getSimulation, getEnvStatus, reopenEnv } from '../api/simulation'
 import { getReport } from '../api/report'
 
 const route = useRoute()
@@ -89,6 +100,11 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('ready') // ready | processing | completed | error
+
+// Environment status
+const envAlive = ref(true) // optimistic until first check
+const envChecking = ref(false)
+const envReopening = ref(false)
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -140,7 +156,7 @@ const toggleMaximize = (target) => {
 // --- Data Logic ---
 const loadReportData = async () => {
   try {
-    addLog(`加载报告数据: ${currentReportId.value}`)
+    addLog(`Loading report data: ${currentReportId.value}`)
     
     // 获取 report 信息以获取 simulation_id
     const reportRes = await getReport(currentReportId.value)
@@ -159,7 +175,7 @@ const loadReportData = async () => {
             const projRes = await getProject(simData.project_id)
             if (projRes.success && projRes.data) {
               projectData.value = projRes.data
-              addLog(`项目加载成功: ${projRes.data.project_id}`)
+              addLog(`Project loaded: ${projRes.data.project_id}`)
               
               // 获取 graph 数据
               if (projRes.data.graph_id) {
@@ -170,10 +186,10 @@ const loadReportData = async () => {
         }
       }
     } else {
-      addLog(`获取报告信息失败: ${reportRes.error || '未知错误'}`)
+      addLog(`Failed to load report info: ${reportRes.error || 'Unknown error'}`)
     }
   } catch (err) {
-    addLog(`加载异常: ${err.message}`)
+    addLog(`Load error: ${err.message}`)
   }
 }
 
@@ -184,10 +200,10 @@ const loadGraph = async (graphId) => {
     const res = await getGraphData(graphId)
     if (res.success) {
       graphData.value = res.data
-      addLog('图谱数据加载成功')
+      addLog('Graph data loaded')
     }
   } catch (err) {
-    addLog(`图谱加载失败: ${err.message}`)
+    addLog(`Graph load failed: ${err.message}`)
   } finally {
     graphLoading.value = false
   }
@@ -199,6 +215,49 @@ const refreshGraph = () => {
   }
 }
 
+// Check environment alive status
+const checkEnvStatus = async () => {
+  if (!simulationId.value) return
+  envChecking.value = true
+  try {
+    const res = await getEnvStatus({ simulation_id: simulationId.value })
+    envAlive.value = res.data?.env_alive ?? false
+  } catch {
+    envAlive.value = false
+  } finally {
+    envChecking.value = false
+  }
+}
+
+// Reopen environment and poll until alive
+const reopenEnvironment = async () => {
+  if (!simulationId.value || envReopening.value) return
+  envReopening.value = true
+  addLog('Reopening simulation environment...')
+  try {
+    await reopenEnv({ simulation_id: simulationId.value })
+    // Poll env-status until alive (up to 60s)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000))
+      try {
+        const res = await getEnvStatus({ simulation_id: simulationId.value })
+        if (res.data?.env_alive) {
+          envAlive.value = true
+          addLog('Environment is ready for interactions')
+          break
+        }
+      } catch { /* keep polling */ }
+    }
+    if (!envAlive.value) {
+      addLog('Environment startup timed out. Try again.')
+    }
+  } catch (e) {
+    addLog(`Failed to reopen environment: ${e.message}`)
+  } finally {
+    envReopening.value = false
+  }
+}
+
 // Watch route params
 watch(() => route.params.reportId, (newId) => {
   if (newId && newId !== currentReportId.value) {
@@ -207,8 +266,17 @@ watch(() => route.params.reportId, (newId) => {
   }
 }, { immediate: true })
 
+// Also accept simulation_id directly from query params (e.g. from History Resume)
+watch(simulationId, (id) => {
+  if (id) checkEnvStatus()
+})
+
 onMounted(() => {
-  addLog('InteractionView 初始化')
+  addLog('InteractionView initialized')
+  // Support direct simulation_id from query (History Resume flow)
+  if (route.query.simulation_id && !simulationId.value) {
+    simulationId.value = route.query.simulation_id
+  }
   loadReportData()
 })
 </script>
@@ -346,5 +414,44 @@ onMounted(() => {
 
 .panel-wrapper.left {
   border-right: 1px solid #EAEAEA;
+}
+
+.env-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  background: #FFF7ED;
+  border-bottom: 1px solid #FED7AA;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.env-banner-text {
+  color: #92400E;
+}
+
+.env-reopen-btn {
+  padding: 5px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #FFFFFF;
+  background: #92400E;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.env-reopen-btn:hover:not(:disabled) {
+  background: #78350F;
+}
+
+.env-reopen-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>
