@@ -551,7 +551,7 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。使用中文。"
+        base_prompt = "You are a social media user persona generation expert. Generate detailed, realistic personas for opinion simulation. You MUST return valid JSON. All string values must not contain unescaped newlines. Write all output in English."
         return base_prompt
     
     def _build_individual_persona_prompt(
@@ -567,24 +567,24 @@ class OasisProfileGenerator:
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:2000] if context else "无额外上下文"
 
-        return f"""为实体生成社交媒体用户人设。
+        return f"""Generate a social media user persona for this entity.
 
-实体: {entity_name} ({entity_type})
-摘要: {entity_summary}
-属性: {attrs_str}
-上下文: {context_str}
+Entity: {entity_name} ({entity_type})
+Summary: {entity_summary}
+Attributes: {attrs_str}
+Context: {context_str}
 
-生成JSON:
-1. bio: 社交媒体简介(100字)
-2. persona: 人设描述(800字纯文本)，含：基本信息、背景经历、性格、社媒行为风格、立场观点、与事件的关联和已有反应
-3. age: 整数
-4. gender: "male"或"female"
-5. mbti: MBTI类型
-6. country: 国家(中文)
-7. profession: 职业
-8. interested_topics: 话题数组
+Return JSON with these fields:
+1. bio: social media bio (100 words)
+2. persona: detailed persona description (300 words plain text) covering background, personality, social media behaviour style, stance/opinions, connection to events
+3. age: integer
+4. gender: "male" or "female"
+5. mbti: MBTI type
+6. country: country name
+7. profession: occupation
+8. interested_topics: array of topic strings
 
-规则: 所有值为字符串或数字，无换行符，persona为连贯文字，中文输出(gender除外)。"""
+Rules: all values are strings or numbers, no newlines in values, write in English."""
 
     def _build_group_persona_prompt(
         self,
@@ -599,24 +599,24 @@ class OasisProfileGenerator:
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:2000] if context else "无额外上下文"
 
-        return f"""为机构/群体实体生成社交媒体账号设定。
+        return f"""Generate a social media account persona for this organisation or group entity.
 
-实体: {entity_name} ({entity_type})
-摘要: {entity_summary}
-属性: {attrs_str}
-上下文: {context_str}
+Entity: {entity_name} ({entity_type})
+Summary: {entity_summary}
+Attributes: {attrs_str}
+Context: {context_str}
 
-生成JSON:
-1. bio: 官方账号简介(100字)
-2. persona: 账号设定(800字纯文本)，含：机构信息、账号定位、发言风格、立场态度、与事件的关联和已有反应
+Return JSON with these fields:
+1. bio: official account bio (100 words)
+2. persona: account persona description (300 words plain text) covering organisation background, account positioning, communication style, stance/attitudes, connection to events
 3. age: 30
 4. gender: "other"
-5. mbti: 账号风格MBTI
-6. country: 国家(中文)
-7. profession: 机构职能
-8. interested_topics: 关注领域数组
+5. mbti: account style MBTI
+6. country: country name
+7. profession: organisational function
+8. interested_topics: array of topic strings
 
-规则: 所有值为字符串或数字，无null，无换行符，中文输出(gender除外)。"""
+Rules: all values are strings or numbers, no null, no newlines in values, write in English."""
     
     def _generate_profile_rule_based(
         self,
