@@ -284,3 +284,174 @@ def generate_seed():
     except Exception as e:
         logger.error(f"Seed generation failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@scenarios_bp.route('/seeds', methods=['GET'])
+def list_seeds():
+    """List all saved reality seed documents."""
+    os.makedirs(SEEDS_DIR, exist_ok=True)
+    seeds = []
+    for fname in sorted(os.listdir(SEEDS_DIR)):
+        if not fname.endswith('.md'):
+            continue
+        fpath = os.path.join(SEEDS_DIR, fname)
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            import re
+            title_match = re.match(r'^#\s+(.+)', content.strip())
+            title = title_match.group(1).strip() if title_match else fname[:-3]
+            seeds.append({
+                "filename": fname,
+                "title": title,
+                "word_count": len(content.split()),
+                "created_at": datetime.fromtimestamp(os.path.getmtime(fpath)).isoformat(),
+            })
+        except Exception:
+            continue
+    return jsonify({"success": True, "seeds": seeds})
+
+
+@scenarios_bp.route('/seeds/<path:filename>', methods=['GET'])
+def get_seed(filename):
+    """Get full content of a saved reality seed."""
+    fpath = os.path.join(SEEDS_DIR, filename)
+    if not os.path.exists(fpath):
+        return jsonify({"success": False, "error": "Seed not found"}), 404
+    with open(fpath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    import re
+    title_match = re.match(r'^#\s+(.+)', content.strip())
+    title = title_match.group(1).strip() if title_match else filename[:-3]
+    return jsonify({"success": True, "filename": filename, "title": title, "content": content})
+
+
+SCENARIO_OPTIONS_SYSTEM_PROMPT = """\
+You generate concise scenario options for a multi-agent social simulation engine.
+Given a reality seed document, produce 4-5 distinct, compelling simulation scenarios that could be run against it.
+
+Each option must be specific — name real actors, describe a concrete triggering event, and state a clear prediction question.
+Make the options meaningfully different from each other in angle, scope, or stakeholder focus.
+
+Return JSON only:
+{
+  "options": [
+    {
+      "id": 1,
+      "title": "Short title (under 60 chars)",
+      "angle": "One sentence: what makes this scenario distinct",
+      "trigger": "The specific event that starts the simulation",
+      "prediction_question": "What happens if/when...?",
+      "key_actors": ["Actor 1", "Actor 2", "Actor 3"]
+    }
+  ]
+}"""
+
+SCENARIO_EXPAND_SYSTEM_PROMPT = """\
+You are a prompt engineer for MiroFish, a multi-agent social simulation engine.
+Given a reality seed document and a chosen scenario option, produce a detailed structured simulation prompt.
+
+Return JSON with these exact keys:
+{
+  "title": "Short title (under 60 chars)",
+  "scenario": "2-3 sentences. Specific event, named actors, domain, stakes.",
+  "prediction_question": "Single question: What happens if/when...",
+  "key_actors": [
+    {"name": "Actor name or role", "stake": "Their position and likely behavior"}
+  ],
+  "time_scope": {
+    "trigger": "What starts the clock",
+    "window": "24h / 72h / 7d / 30d",
+    "phases": "e.g. initial shock -> media amplification -> institutional response"
+  },
+  "constraints": ["Hard fact 1", "Hard fact 2"],
+  "success_metrics": ["Measurable metric 1", "Measurable metric 2"],
+  "background_notes": "Key context already covered in the reality seed",
+  "estimated_actors": 15,
+  "recommended_window_hours": 72
+}
+
+Rules:
+- Be specific, not generic. Use names from the reality seed.
+- 8-15 actors spanning supporters, opponents, neutral, institutions, media.
+- Default to 72h window unless scenario clearly needs longer.
+- Write everything in English."""
+
+
+@scenarios_bp.route('/generate-scenario-options', methods=['POST'])
+def generate_scenario_options():
+    """
+    Given a reality seed, generate 4-5 distinct scenario options.
+
+    Body: {"seed_content": "...", "seed_filename": "optional"}
+    Returns: {"options": [{id, title, angle, trigger, prediction_question, key_actors}]}
+    """
+    data = request.get_json(silent=True) or {}
+    seed_content = data.get("seed_content", "").strip()
+    if not seed_content:
+        return jsonify({"success": False, "error": "seed_content is required"}), 400
+
+    try:
+        llm = LLMClient.from_boost_config() or LLMClient()
+        result = llm.chat_json(
+            messages=[
+                {"role": "system", "content": SCENARIO_OPTIONS_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Reality seed:\n\n{seed_content[:8000]}"},
+            ],
+            temperature=0.7,
+            max_tokens=2048,
+        )
+        options = result.get("options", [])
+        return jsonify({"success": True, "options": options})
+    except Exception as e:
+        logger.error(f"Scenario options generation failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@scenarios_bp.route('/expand-scenario-option', methods=['POST'])
+def expand_scenario_option():
+    """
+    Expand a chosen scenario option into a full structured scenario.
+
+    Body: {"seed_content": "...", "option": {title, angle, trigger, prediction_question, key_actors}}
+    Returns: full scenario JSON + rendered_prompt
+    """
+    data = request.get_json(silent=True) or {}
+    seed_content = data.get("seed_content", "").strip()
+    option = data.get("option", {})
+    if not seed_content or not option:
+        return jsonify({"success": False, "error": "seed_content and option are required"}), 400
+
+    user_msg = (
+        f"Reality seed:\n\n{seed_content[:6000]}\n\n"
+        f"Chosen scenario option:\n"
+        f"Title: {option.get('title', '')}\n"
+        f"Angle: {option.get('angle', '')}\n"
+        f"Trigger: {option.get('trigger', '')}\n"
+        f"Prediction question: {option.get('prediction_question', '')}\n"
+        f"Key actors: {', '.join(option.get('key_actors', []))}\n\n"
+        "Now generate the full detailed simulation prompt."
+    )
+
+    try:
+        llm = LLMClient.from_boost_config() or LLMClient()
+        result = llm.chat_json(
+            messages=[
+                {"role": "system", "content": SCENARIO_EXPAND_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.4,
+            max_tokens=3000,
+        )
+
+        scenario_id = str(uuid.uuid4())[:8]
+        result["id"] = scenario_id
+        result["created_at"] = datetime.utcnow().isoformat()
+        result["source"] = "seed_expanded"
+        result["rendered_prompt"] = _scenario_to_prompt(result)
+
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        logger.error(f"Scenario expansion failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+

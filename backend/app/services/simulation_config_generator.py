@@ -507,16 +507,16 @@ class SimulationConfigGenerator:
         # 计算最大允许值（80%的agent数）
         max_agents_allowed = max(1, int(num_entities * 0.9))
         
-        prompt = f"""模拟需求:
+        prompt = f"""Simulation requirement:
 {context_truncated}
 
-生成时间配置JSON。中国人作息(凌晨低/早间渐增/工作中等/晚间高峰)，根据事件和群体调整。
-agents_per_hour范围: 1-{max_agents_allowed}
+Generate a time configuration JSON. Use realistic activity patterns (low overnight, rising in the morning, moderate during work hours, peak in the evening). Adjust based on the scenario and agent demographics.
+agents_per_hour range: 1-{max_agents_allowed}
 
-返回JSON:
-{{"total_simulation_hours":72,"minutes_per_round":60,"agents_per_hour_min":5,"agents_per_hour_max":50,"peak_hours":[19,20,21,22],"off_peak_hours":[0,1,2,3,4,5],"morning_hours":[6,7,8],"work_hours":[9,10,11,12,13,14,15,16,17,18],"reasoning":"说明"}}"""
+Return JSON only:
+{{"total_simulation_hours":72,"minutes_per_round":60,"agents_per_hour_min":5,"agents_per_hour_max":50,"peak_hours":[19,20,21,22],"off_peak_hours":[0,1,2,3,4,5],"morning_hours":[6,7,8],"work_hours":[9,10,11,12,13,14,15,16,17,18],"reasoning":"explanation"}}"""
 
-        system_prompt = "你是社交媒体模拟专家。返回纯JSON格式，时间配置需符合中国人作息习惯。"
+        system_prompt = "You are a social media simulation expert. Return pure JSON only. Write all content in English."
         
         try:
             return self._call_llm_with_retry(prompt, system_prompt)
@@ -525,17 +525,17 @@ agents_per_hour范围: 1-{max_agents_allowed}
             return self._get_default_time_config(num_entities)
     
     def _get_default_time_config(self, num_entities: int) -> Dict[str, Any]:
-        """获取默认时间配置（中国人作息）"""
+        """Default time configuration fallback."""
         return {
             "total_simulation_hours": 72,
-            "minutes_per_round": 60,  # 每轮1小时，加快时间流速
+            "minutes_per_round": 60,
             "agents_per_hour_min": max(1, num_entities // 15),
             "agents_per_hour_max": max(5, num_entities // 5),
             "peak_hours": [19, 20, 21, 22],
             "off_peak_hours": [0, 1, 2, 3, 4, 5],
             "morning_hours": [6, 7, 8],
             "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-            "reasoning": "使用默认中国人作息配置（每轮1小时）"
+            "reasoning": "Default configuration (1 hour per round)"
         }
     
     def _parse_time_config(self, result: Dict[str, Any], num_entities: int) -> TimeSimulationConfig:
@@ -603,46 +603,46 @@ agents_per_hour范围: 1-{max_agents_allowed}
         # 使用配置的上下文截断长度
         context_truncated = context[:self.EVENT_CONFIG_CONTEXT_LENGTH]
         
-        prompt = f"""基于以下模拟需求，生成事件配置。
+        prompt = f"""Generate an event configuration based on the following simulation requirement.
 
-模拟需求: {simulation_requirement}
+Simulation requirement: {simulation_requirement}
 
 {context_truncated}
 
-## 可用实体类型及示例
+## Available entity types and examples
 {type_info}
 
-## 任务
-请生成事件配置JSON：
-- 提取热点话题关键词
-- 描述舆论发展方向
-- 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）**
+## Task
+Generate an event configuration JSON:
+- Extract trending topic keywords (in English)
+- Describe the narrative direction of public opinion (in English)
+- Design initial post content (in English), **each post must specify a poster_type (the type of entity posting it)**
 
-**重要**: poster_type 必须从上面的"可用实体类型"中选择，这样初始帖子才能分配给合适的 Agent 发布。
-例如：官方声明应由 Official/University 类型发布，新闻由 MediaOutlet 发布，学生观点由 Student 发布。
+**Important**: poster_type must be chosen from the "Available entity types" above so the post can be assigned to the right agent.
+Example: official announcements from Official/University types, news from MediaOutlet, student opinions from Student.
 
-返回JSON格式（不要markdown）：
+Return JSON only (no markdown):
 {{
-    "hot_topics": ["关键词1", "关键词2", ...],
-    "narrative_direction": "<舆论发展方向描述>",
+    "hot_topics": ["keyword1", "keyword2", ...],
+    "narrative_direction": "<description of how public opinion will develop>",
     "initial_posts": [
-        {{"content": "帖子内容", "poster_type": "实体类型（必须从可用类型中选择）"}},
+        {{"content": "post content in English", "poster_type": "EntityType (must match available types)"}},
         ...
     ],
-    "reasoning": "<简要说明>"
+    "reasoning": "<brief explanation>"
 }}"""
 
-        system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
-        
+        system_prompt = "You are a public opinion analysis expert. Return pure JSON only. Write all content (hot_topics, narrative_direction, post content) in English."
+
         try:
             return self._call_llm_with_retry(prompt, system_prompt)
         except Exception as e:
-            logger.warning(f"事件配置LLM生成失败: {e}, 使用默认配置")
+            logger.warning(f"Event config LLM generation failed: {e}, using defaults")
             return {
                 "hot_topics": [],
                 "narrative_direction": "",
                 "initial_posts": [],
-                "reasoning": "使用默认配置"
+                "reasoning": "Default configuration"
             }
     
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
@@ -759,18 +759,18 @@ agents_per_hour范围: 1-{max_agents_allowed}
                 "summary": e.summary[:summary_len] if e.summary else ""
             })
         
-        prompt = f"""模拟需求: {simulation_requirement}
+        prompt = f"""Simulation requirement: {simulation_requirement}
 
-实体列表:
+Entity list:
 {json.dumps(entity_list, ensure_ascii=False)}
 
-为每个实体生成活动配置。中国人作息，官方机构低活跃高影响力，媒体中活跃快响应，个人高活跃低影响力。
+Generate activity configurations for each entity. Use realistic social media behaviour patterns: official institutions have low activity but high influence, media outlets have medium activity with fast response times, individuals have high activity but lower influence.
 
-返回JSON:
+Return JSON only:
 {{"agent_configs":[{{"agent_id":0,"activity_level":0.5,"posts_per_hour":1.0,"comments_per_hour":2.0,"active_hours":[8,9,10],"response_delay_min":5,"response_delay_max":60,"sentiment_bias":0.0,"stance":"neutral","influence_weight":1.0}}]
 }}"""
 
-        system_prompt = "你是社交媒体行为分析专家。返回纯JSON，配置需符合中国人作息习惯。"
+        system_prompt = "You are a social media behaviour analysis expert. Return pure JSON only. Write all content in English."
         
         try:
             result = self._call_llm_with_retry(prompt, system_prompt)

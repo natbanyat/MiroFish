@@ -172,25 +172,72 @@
                 </div>
               </div>
 
-              <!-- AI Seed Generator -->
-              <div class="seed-gen-bar">
-                <input
-                  v-model="seedDescription"
-                  class="seed-input"
-                  placeholder="Describe a scenario to auto-generate background docs..."
-                  :disabled="seedGenerating || loading"
-                  @keydown.enter="generateRealitySeed"
-                />
-                <button
-                  class="seed-btn"
-                  @click="generateRealitySeed"
-                  :disabled="!seedDescription.trim() || seedGenerating || loading"
-                >
-                  <span v-if="!seedGenerating">* Generate Seed</span>
-                  <span v-else>Generating...</span>
-                </button>
+              <!-- Seed controls: saved dropdown + generate new -->
+              <div class="seed-controls">
+                <!-- Saved seeds dropdown -->
+                <div class="seed-saved-row">
+                  <select
+                    class="seed-select"
+                    v-model="selectedSeedFilename"
+                    :disabled="seedGenerating || loading"
+                    @change="onSeedSelected"
+                  >
+                    <option value="">— Pick a saved seed —</option>
+                    <option v-for="s in savedSeeds" :key="s.filename" :value="s.filename">
+                      {{ s.title }} ({{ s.word_count }}w)
+                    </option>
+                  </select>
+                </div>
+
+                <!-- Generate new seed -->
+                <div class="seed-gen-bar">
+                  <input
+                    v-model="seedDescription"
+                    class="seed-input"
+                    placeholder="Or describe a scenario to generate a new seed..."
+                    :disabled="seedGenerating || loading"
+                    @keydown.enter="generateRealitySeed"
+                  />
+                  <button
+                    class="seed-btn"
+                    @click="generateRealitySeed"
+                    :disabled="!seedDescription.trim() || seedGenerating || loading"
+                  >
+                    <span v-if="!seedGenerating">* Generate Seed</span>
+                    <span v-else>Generating...</span>
+                  </button>
+                </div>
+                <div v-if="seedError" class="seed-error">{{ seedError }}</div>
+
+                <!-- Scenario options panel (shown after a seed is loaded) -->
+                <div v-if="activeSeedContent && !scenarioOptionsLoading && scenarioOptions.length === 0" class="seed-actions-row">
+                  <span class="seed-loaded-label">Seed loaded: {{ activeSeedTitle }}</span>
+                  <button class="seed-btn" @click="generateScenarioOpts" :disabled="loading">
+                    * Generate Scenario Options
+                  </button>
+                </div>
+
+                <div v-if="scenarioOptionsLoading" class="seed-options-loading">
+                  <span class="seed-spin">*</span> Generating scenario options...
+                </div>
+
+                <!-- 4-5 scenario option cards -->
+                <div v-if="scenarioOptions.length > 0" class="scenario-options-panel">
+                  <div class="options-header">Pick a scenario to expand:</div>
+                  <div
+                    v-for="opt in scenarioOptions"
+                    :key="opt.id"
+                    class="scenario-option-card"
+                    :class="{ 'selected': selectedOption?.id === opt.id, 'expanding': expandingOption === opt.id }"
+                    @click="pickScenarioOption(opt)"
+                  >
+                    <div class="opt-title">{{ opt.title }}</div>
+                    <div class="opt-angle">{{ opt.angle }}</div>
+                    <div class="opt-question">{{ opt.prediction_question }}</div>
+                    <div v-if="expandingOption === opt.id" class="opt-expanding">Expanding...</div>
+                  </div>
+                </div>
               </div>
-              <div v-if="seedError" class="seed-error">{{ seedError }}</div>
             </div>
 
             <!-- 分割线 -->
@@ -245,7 +292,7 @@ import HistoryDatabase from '../components/HistoryDatabase.vue'
 import CostTierToggle from '../components/CostTierToggle.vue'
 import ScenarioCreator from '../components/ScenarioCreator.vue'
 import ModelRouter from '../components/ModelRouter.vue'
-import { generateSeed } from '../api/scenarios'
+import { generateSeed, listSeeds, getSeed, generateScenarioOptions, expandScenarioOption } from '../api/scenarios'
 
 const router = useRouter()
 
@@ -324,6 +371,59 @@ const seedDescription = ref('')
 const seedGenerating = ref(false)
 const seedError = ref('')
 
+// Saved seeds
+const savedSeeds = ref([])
+const selectedSeedFilename = ref('')
+const activeSeedContent = ref('')
+const activeSeedTitle = ref('')
+
+// Scenario options
+const scenarioOptions = ref([])
+const scenarioOptionsLoading = ref(false)
+const selectedOption = ref(null)
+const expandingOption = ref(null)
+
+const loadSavedSeeds = async () => {
+  try {
+    const res = await listSeeds()
+    if (res && res.seeds) savedSeeds.value = res.seeds
+  } catch (e) {
+    console.warn('Could not load saved seeds:', e)
+  }
+}
+
+const onSeedSelected = async () => {
+  if (!selectedSeedFilename.value) {
+    activeSeedContent.value = ''
+    activeSeedTitle.value = ''
+    scenarioOptions.value = []
+    return
+  }
+  try {
+    const res = await getSeed(selectedSeedFilename.value)
+    if (res && res.content) {
+      activeSeedContent.value = res.content
+      activeSeedTitle.value = res.title
+      scenarioOptions.value = []
+      selectedOption.value = null
+      // Add to upload files
+      _addSeedAsFile(res.content, selectedSeedFilename.value, res.title)
+    }
+  } catch (e) {
+    seedError.value = 'Failed to load seed: ' + (e.message || String(e))
+  }
+}
+
+const _addSeedAsFile = (content, filename, title) => {
+  // Remove any existing seed file
+  files.value = files.value.filter(f => !f._aiGenerated)
+  const blob = new Blob([content], { type: 'text/markdown' })
+  const file = new File([blob], filename, { type: 'text/markdown' })
+  file._aiGenerated = true
+  file._seedTitle = title
+  files.value.push(file)
+}
+
 const generateRealitySeed = async () => {
   if (!seedDescription.value.trim() || seedGenerating.value) return
   seedGenerating.value = true
@@ -331,23 +431,22 @@ const generateRealitySeed = async () => {
 
   try {
     const res = await generateSeed(seedDescription.value.trim())
-    console.log('Seed generation response:', res)
-
     if (!res || !res.success) {
       throw new Error((res && res.error) || 'Seed generation returned unsuccessful')
     }
 
-    // Create a File-like object so the existing upload flow recognises it
-    const blob = new Blob([res.content_preview || ''], { type: 'text/markdown' })
-    const file = new File([blob], res.filename || 'reality-seed.md', { type: 'text/markdown' })
-    file._aiGenerated = true
-    file._serverPath = res.path
-    files.value.push(file)
+    // Fetch full content then treat as active seed
+    const full = await getSeed(res.filename)
+    activeSeedContent.value = full ? full.content : (res.content_preview || '')
+    activeSeedTitle.value = res.title
+    scenarioOptions.value = []
+    selectedOption.value = null
 
-    // Auto-fill the simulation prompt if still empty
-    if (!formData.value.simulationRequirement.trim()) {
-      formData.value.simulationRequirement = `## Scenario\n\n${seedDescription.value.trim()}`
-    }
+    _addSeedAsFile(activeSeedContent.value, res.filename, res.title)
+
+    // Refresh saved seeds list
+    await loadSavedSeeds()
+    selectedSeedFilename.value = res.filename
 
     seedDescription.value = ''
   } catch (e) {
@@ -357,6 +456,42 @@ const generateRealitySeed = async () => {
     seedGenerating.value = false
   }
 }
+
+const generateScenarioOpts = async () => {
+  if (!activeSeedContent.value) return
+  scenarioOptionsLoading.value = true
+  scenarioOptions.value = []
+  try {
+    const res = await generateScenarioOptions(activeSeedContent.value)
+    if (res && res.options) scenarioOptions.value = res.options
+  } catch (e) {
+    seedError.value = 'Failed to generate options: ' + (e.message || String(e))
+  } finally {
+    scenarioOptionsLoading.value = false
+  }
+}
+
+const pickScenarioOption = async (opt) => {
+  if (expandingOption.value) return
+  expandingOption.value = opt.id
+  selectedOption.value = opt
+  try {
+    const res = await expandScenarioOption(activeSeedContent.value, opt)
+    if (res && res.rendered_prompt) {
+      formData.value.simulationRequirement = res.rendered_prompt
+      // Clear the options panel once picked
+      scenarioOptions.value = []
+      selectedOption.value = null
+    }
+  } catch (e) {
+    seedError.value = 'Failed to expand scenario: ' + (e.message || String(e))
+  } finally {
+    expandingOption.value = null
+  }
+}
+
+// Load seeds on mount
+loadSavedSeeds()
 
 // 场景选择回调
 const onScenarioSelect = (prompt) => {
@@ -869,11 +1004,123 @@ const startSimulation = () => {
   margin: 0 10px;
 }
 
+/* Seed controls wrapper */
+.seed-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.seed-saved-row {
+  display: flex;
+  gap: 6px;
+}
+
+.seed-select {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #DDD;
+  background: #FAFAFA;
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #333;
+  cursor: pointer;
+}
+
+.seed-select:focus {
+  outline: none;
+  border-color: #FF4500;
+}
+
+.seed-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.seed-loaded-label {
+  font-size: 0.72rem;
+  color: #888;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seed-options-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: #888;
+  padding: 6px 0;
+}
+
+/* Scenario options cards */
+.scenario-options-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.options-header {
+  font-size: 0.72rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.scenario-option-card {
+  border: 1px solid #E0E0E0;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: #FAFAFA;
+}
+
+.scenario-option-card:hover {
+  border-color: #FF4500;
+  background: #FFF8F6;
+}
+
+.scenario-option-card.selected,
+.scenario-option-card.expanding {
+  border-color: #FF4500;
+  background: #FFF8F6;
+}
+
+.opt-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 3px;
+}
+
+.opt-angle {
+  font-size: 0.75rem;
+  color: #FF4500;
+  margin-bottom: 3px;
+}
+
+.opt-question {
+  font-size: 0.73rem;
+  color: #666;
+  font-style: italic;
+}
+
+.opt-expanding {
+  font-size: 0.72rem;
+  color: #FF4500;
+  margin-top: 4px;
+}
+
 /* Seed generator bar */
 .seed-gen-bar {
   display: flex;
   gap: 6px;
-  margin-top: 8px;
 }
 
 .seed-input {
