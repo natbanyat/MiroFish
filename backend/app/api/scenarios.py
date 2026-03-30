@@ -24,7 +24,7 @@ Rules:
 - Every paragraph must contain at least 2 named entities and 1 explicit relationship
 - Use real/realistic names, titles, organizations — never placeholders
 - Include: executive summary, key stakeholders (8-15), timeline, regulatory context, public discourse, data points, unresolved questions
-- Write 3000-5000 words of dense, factual prose
+- Write 1000-1500 words of dense, factual prose
 - Language must match the user's input language
 - Write as a real briefing document, not fiction
 - Most important content first (system truncates from bottom)
@@ -241,7 +241,7 @@ def generate_seed():
         llm = LLMClient.from_boost_config() or LLMClient()
         # Reasoning models (gpt-5+) burn tokens on thinking — need higher limit
         # for long-form document generation
-        token_limit = 16384 if llm._uses_max_completion_tokens() else 4096
+        token_limit = 4096 if llm._uses_max_completion_tokens() else 2048
         content = llm.chat(
             messages=[
                 {"role": "system", "content": SEED_SYSTEM_PROMPT},
