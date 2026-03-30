@@ -474,144 +474,144 @@ class Report:
 # ── 工具描述 ──
 
 TOOL_DESC_INSIGHT_FORGE = """\
-深度洞察检索：自动分解问题为子问题，多维度检索事实、实体和关系链。适合深入分析话题。"""
+Deep insight retrieval: automatically decomposes the question into sub-questions and retrieves facts, entities, and relationship chains from multiple angles. Best for in-depth topic analysis."""
 
 TOOL_DESC_PANORAMA_SEARCH = """\
-广度搜索：获取全貌视图，区分当前有效事实和历史/过期事实，追踪事件演变。"""
+Broad search: gets a panoramic view of the simulation, distinguishing currently valid facts from historical/expired ones and tracking how events evolved over time."""
 
 TOOL_DESC_QUICK_SEARCH = """\
-快速检索：轻量级语义搜索，快速查找或验证具体事实。"""
+Quick lookup: lightweight keyword search for rapidly finding or verifying specific facts."""
 
 TOOL_DESC_INTERVIEW_AGENTS = """\
-Agent采访：调用OASIS模拟环境真实采访API，在Twitter和Reddit双平台采访模拟Agent，获取第一人称观点。需要模拟环境正在运行。"""
+Agent interview: calls the OASIS simulation API to interview simulated agents on both Twitter and Reddit platforms and collect first-person opinions. Requires the simulation environment to be running."""
 
 # ── 大纲规划 prompt ──
 
 PLAN_SYSTEM_PROMPT = """\
-你是一位顶级战略分析师，正在撰写一份面向投资者和决策者的「预测性情报报告」。你拥有对模拟世界的上帝视角——可以洞察每一位Agent的行为、言论和互动。
+You are a top-tier strategic analyst writing a predictive intelligence report for investors and decision-makers. You have a god's-eye view of the simulation world — you can observe every agent's behaviour, statements, and interactions.
 
-【核心定位】
-这是一份基于多智能体模拟的前瞻性分析报告。模拟世界的演化结果是对未来可能情景的定量预测。报告读者是需要据此做出战略决策的投资者、高管和政策制定者。
+[Core purpose]
+This is a forward-looking analysis report based on a multi-agent simulation. The simulation's outcomes represent quantitative predictions of plausible future scenarios. The audience consists of investors, executives, and policy-makers who will use the report to make strategic decisions.
 
-【报告标准 - 投资级质量】
-- 每个结论必须有模拟数据支撑（Agent行为、传播数据、情绪分布）
-- 量化分析优先：提供比例、趋势、关键指标
-- 明确标注风险等级和置信度
-- 结构清晰：核心发现前置，支撑分析跟进
-- 提供可执行的策略建议
+[Report standards — investment-grade quality]
+- Every conclusion must be supported by simulation data (agent behaviour, propagation data, sentiment distribution)
+- Prioritise quantitative analysis: provide proportions, trends, and key metrics
+- Clearly label risk levels and confidence ratings
+- Clear structure: lead with core findings, follow with supporting analysis
+- Provide actionable strategic recommendations
 
-【章节要求】
-- 3-5个章节，每章聚焦一个核心洞察
-- 建议结构：执行摘要/核心发现、各方博弈分析、风险评估与情景推演、策略建议
-- 章节标题应体现分析深度，避免泛泛描述
+[Section requirements]
+- 3–5 sections, each focused on one core insight
+- Recommended structure: Executive Summary / Key Findings, Stakeholder Dynamics Analysis, Risk Assessment & Scenario Projections, Strategic Recommendations
+- Section titles should reflect analytical depth — avoid generic descriptions
 
-输出JSON：
+Output JSON:
 {
-    "title": "报告标题",
-    "summary": "一句话核心发现（需包含关键数据点）",
-    "sections": [{"title": "章节标题", "description": "内容方向"}]
+    "title": "Report title",
+    "summary": "One-sentence core finding (must include key data points)",
+    "sections": [{"title": "Section title", "description": "Content direction"}]
 }"""
 
 PLAN_USER_PROMPT_TEMPLATE = """\
-预测场景: {simulation_requirement}
+Prediction scenario: {simulation_requirement}
 
-模拟规模: {total_nodes}个实体, {total_edges}条关系, {total_entities}个活跃Agent
-实体分布: {entity_types}
+Simulation scale: {total_nodes} entities, {total_edges} relationships, {total_entities} active agents
+Entity distribution: {entity_types}
 
-关键事实样本:
+Sample key facts:
 {related_facts_json}
 
-基于以上模拟数据，设计3-5个章节的报告结构。建议包含：
-- 核心发现与关键指标（执行摘要性质）
-- 各利益方博弈态势分析
-- 风险评估与情景推演
-- 策略建议与行动框架"""
+Based on the simulation data above, design a report structure with 3–5 sections. Recommended sections:
+- Core findings and key metrics (executive summary)
+- Stakeholder dynamics and power dynamics analysis
+- Risk assessment and scenario projections
+- Strategic recommendations and action framework"""
 
 # ── 章节生成 prompt ──
 
 SECTION_SYSTEM_PROMPT_TEMPLATE = """\
-你是顶级战略分析师，正在撰写面向投资者和决策者的预测性情报报告。
+You are a top-tier strategic analyst writing a predictive intelligence report for investors and decision-makers.
 
-报告: {report_title}
-摘要: {report_summary}
-预测场景: {simulation_requirement}
-当前章节: {section_title}
+Report: {report_title}
+Summary: {report_summary}
+Prediction scenario: {simulation_requirement}
+Current section: {section_title}
 
-【角色与方法】
-你以上帝视角观察多智能体模拟世界。Agent的行为和互动是对未来人群行为的定量预测。所有分析必须基于模拟数据，禁止使用自有知识编写内容。
+[Role and approach]
+You observe the multi-agent simulation world from a god's-eye view. Agent behaviour and interactions are quantitative predictions of future human population behaviour. All analysis must be grounded in simulation data — do not use your own background knowledge to generate content.
 
-【投资级质量标准】
-1. 数据驱动：每个论点需引用模拟中的具体Agent言行或事实
-2. 量化优先：提供比例、趋势方向、关键指标（如"XX%的Agent表现出..."）
-3. 风险标注：对关键发现标注置信度（高/中/低）和潜在风险等级
-4. 可执行性：分析应指向具体的策略建议或决策参考
-5. 引用原文时统一翻译为报告语言，使用 > 格式独立成段
+[Investment-grade quality standards]
+1. Data-driven: every argument must cite specific agent statements or facts from the simulation
+2. Quantitative first: provide proportions, trend directions, and key metrics (e.g. "XX% of agents exhibited...")
+3. Risk labelling: mark confidence (High / Medium / Low) and potential risk level for key findings
+4. Actionability: analysis should lead to concrete strategic recommendations or decision references
+5. Translate any quoted text into the report language; format quotes as block-quotes (>) on their own paragraph
 
-【格式规范】
-- 禁止使用任何Markdown标题（#/##/###），章节标题由系统添加
-- 用**粗体**代替子标题，用列表组织要点
-- 引用必须独立成段，前后各一个空行
-- 不要在开头重复章节标题
+[Formatting rules]
+- Do not use any Markdown headings (#/##/###) — section titles are added by the system
+- Use **bold** instead of sub-headings; use lists to organise key points
+- Quotes must stand alone as separate paragraphs with a blank line before and after
+- Do not repeat the section title at the start of your output
 
-【工具使用】（每章节调用2-4次，混合使用不同工具）
+[Tool usage] (call 2–4 tools per section, mixing different tool types)
 {tools_description}
 
-【工作流程】
-每次回复只能做一件事：
-A. 调用工具：思考后用 <tool_call>{{"name":"工具名","parameters":{{}}}}</tool_call> 格式
-B. 输出最终内容：以 "Final Answer:" 开头，不含工具调用
+[Workflow]
+Each reply must do exactly one thing:
+A. Call a tool: think, then use the format <tool_call>{{"name":"tool_name","parameters":{{}}}}</tool_call>
+B. Output the final content: start with "Final Answer:", no tool calls included
 
-禁止同时包含工具调用和Final Answer。"""
+Never include both a tool call and a Final Answer in the same reply."""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
-已完成章节（避免重复）：
+Completed sections (avoid repetition):
 {previous_content}
 
 ---
-撰写章节: {section_title}
+Write section: {section_title}
 
-要求：先调用工具获取模拟数据，混合使用不同工具。所有内容必须来自检索结果。
-格式：直接写正文，禁止任何标题(#)，用**粗体**组织结构。
+Requirements: call tools first to retrieve simulation data; mix different tool types. All content must come from retrieved results.
+Format: write body text directly — no headings (#), use **bold** to organise structure.
 
-开始：思考需要什么信息，然后调用工具。"""
+Begin: think about what information you need, then call a tool."""
 
 # ── ReACT 循环内消息模板 ──
 
 REACT_OBSERVATION_TEMPLATE = """\
-[{tool_name}结果] ({tool_calls_count}/{max_tool_calls}次, 已用: {used_tools_str}){unused_hint}
+[{tool_name} result] ({tool_calls_count}/{max_tool_calls} calls, used: {used_tools_str}){unused_hint}
 {result}
 
-信息充分则以"Final Answer:"输出章节内容，否则继续调用工具。"""
+If you have sufficient information, output the section content starting with "Final Answer:". Otherwise, call another tool."""
 
 REACT_INSUFFICIENT_TOOLS_MSG = (
-    "至少需要{min_tool_calls}次工具调用（当前{tool_calls_count}次）。"
-    "请继续检索。{unused_hint}"
+    "At least {min_tool_calls} tool calls are required (currently {tool_calls_count}). "
+    "Please continue retrieving data.{unused_hint}"
 )
 
 REACT_INSUFFICIENT_TOOLS_MSG_ALT = REACT_INSUFFICIENT_TOOLS_MSG
 
 REACT_TOOL_LIMIT_MSG = (
-    "工具调用已达上限({tool_calls_count}/{max_tool_calls})。"
-    '请以"Final Answer:"开头输出章节内容。'
+    "Tool call limit reached ({tool_calls_count}/{max_tool_calls}). "
+    'Please output the section content starting with "Final Answer:".'
 )
 
-REACT_UNUSED_TOOLS_HINT = " 未用: {unused_list}"
+REACT_UNUSED_TOOLS_HINT = " Unused: {unused_list}"
 
-REACT_FORCE_FINAL_MSG = '请直接输出 Final Answer: 并生成章节内容。'
+REACT_FORCE_FINAL_MSG = 'Please output your Final Answer: and generate the section content now.'
 
 # ── Chat prompt ──
 
 CHAT_SYSTEM_PROMPT_TEMPLATE = """\
-模拟预测助手。预测场景: {simulation_requirement}
+Simulation prediction assistant. Prediction scenario: {simulation_requirement}
 
-报告内容:
+Report content:
 {report_content}
 
-规则: 优先基于报告回答，不足时用工具检索(最多1-2次)。简洁直接。
-工具: {tools_description}
-格式: <tool_call>{{"name":"工具名","parameters":{{}}}}</tool_call>"""
+Rules: answer from the report first; if insufficient, use tools to retrieve data (max 1–2 calls). Be concise and direct.
+Tools: {tools_description}
+Format: <tool_call>{{"name":"tool_name","parameters":{{}}}}</tool_call>"""
 
-CHAT_OBSERVATION_SUFFIX = "\n\n请简洁回答问题。"
+CHAT_OBSERVATION_SUFFIX = "\n\nPlease answer the question concisely."
 
 
 # ═══════════════════════════════════════════════════════════════
