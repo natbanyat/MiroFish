@@ -86,11 +86,20 @@
 
       <!-- RIGHT PANEL: Workflow Timeline -->
       <div class="right-panel" ref="rightPanel">
-        <div class="panel-header" :class="`panel-header--${activeStep.status}`" v-if="!isComplete">
+        <div class="panel-header" :class="`panel-header--${activeStep.status}`" v-if="!isComplete && !isFailed">
           <span class="header-dot" v-if="activeStep.status === 'active'"></span>
           <span class="header-index mono">{{ activeStep.noLabel }}</span>
           <span class="header-title">{{ activeStep.title }}</span>
           <span class="header-meta mono" v-if="activeStep.meta">{{ activeStep.meta }}</span>
+        </div>
+
+        <!-- Failed state banner with retry -->
+        <div v-if="isFailed" class="report-failed-banner">
+          <span class="failed-icon">!</span>
+          <span class="failed-msg">Report generation failed.</span>
+          <button class="retry-btn" @click="retryReport" :disabled="isRetrying">
+            {{ isRetrying ? 'Restarting...' : 'Retry' }}
+          </button>
         </div>
 
         <!-- Workflow Overview (flat, status-based palette) -->
@@ -400,7 +409,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAgentLog, getConsoleLog, downloadReportPdf } from '../api/report'
+import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport } from '../api/report'
 
 const router = useRouter()
 
@@ -425,6 +434,34 @@ const handleDownloadPdf = async () => {
   }
 }
 
+// Retry failed report
+const retryReport = async () => {
+  if (!props.simulationId || isRetrying.value) return
+  isRetrying.value = true
+  isFailed.value = false
+  agentLogs.value = []
+  consoleLogs.value = []
+  agentLogLine.value = 0
+  consoleLogLine.value = 0
+  reportOutline.value = null
+  generatedSections.value = {}
+  try {
+    const res = await generateReport({ simulation_id: props.simulationId, force_regenerate: true })
+    if (res.success && res.data?.report_id) {
+      emit('add-log', `Report restarted: ${res.data.report_id}`)
+      startPolling()
+    } else {
+      isFailed.value = true
+      emit('add-log', `Failed to restart: ${res.error || 'Unknown error'}`)
+    }
+  } catch (e) {
+    isFailed.value = true
+    emit('add-log', `Retry error: ${e.message}`)
+  } finally {
+    isRetrying.value = false
+  }
+}
+
 // Navigation
 const goToInteraction = () => {
   if (props.reportId) {
@@ -444,6 +481,8 @@ const expandedContent = ref(new Set())
 const expandedLogs = ref(new Set())
 const collapsedSections = ref(new Set())
 const isComplete = ref(false)
+const isFailed = ref(false)
+const isRetrying = ref(false)
 const isDownloading = ref(false)
 const startTime = ref(null)
 const leftPanel = ref(null)
@@ -2071,10 +2110,15 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_complete') {
             isComplete.value = true
-            currentSectionIndex.value = null  // 确保清除 loading 状态
+            currentSectionIndex.value = null
             emit('update-status', 'completed')
             stopPolling()
-            // 滚动逻辑统一在循环结束后的 nextTick 中处理
+          }
+
+          if (log.action === 'error' || log.action === 'report_failed') {
+            isFailed.value = true
+            emit('update-status', 'error')
+            stopPolling()
           }
           
           if (log.action === 'report_start') {
@@ -2158,12 +2202,27 @@ const fetchConsoleLog = async () => {
       if (newLogs.length > 0) {
         consoleLogs.value.push(...newLogs)
         consoleLogLine.value = res.data.from_line + newLogs.length
-        
+
+        // Detect failure from console log keywords
+        const latestLogs = newLogs.join('\n')
+        if (!isFailed.value && !isComplete.value && (latestLogs.includes('ERROR') || latestLogs.includes('failed') || latestLogs.includes('报告生成失败'))) {
+          isFailed.value = true
+          emit('update-status', 'error')
+          stopPolling()
+        }
+
         nextTick(() => {
           if (logContent.value) {
             logContent.value.scrollTop = logContent.value.scrollHeight
           }
         })
+      }
+
+      // Also detect if status endpoint marks it failed
+      if (res.data?.status === 'failed' && !isFailed.value && !isComplete.value) {
+        isFailed.value = true
+        emit('update-status', 'error')
+        stopPolling()
       }
     }
   } catch (err) {
@@ -2217,8 +2276,9 @@ watch(() => props.reportId, (newId) => {
     expandedLogs.value = new Set()
     collapsedSections.value = new Set()
     isComplete.value = false
+    isFailed.value = false
     startTime.value = null
-    
+
     startPolling()
   }
 }, { immediate: true })
@@ -2335,6 +2395,49 @@ watch(() => props.reportId, (newId) => {
 .panel-header--todo .header-index,
 .panel-header--todo .header-title {
   color: #9CA3AF;
+}
+
+/* Failed banner + retry */
+.report-failed-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #FFF2F2;
+  border: 1px solid #FFCCCC;
+  margin-bottom: 8px;
+}
+
+.failed-icon {
+  font-weight: 700;
+  color: #CC0000;
+  font-size: 1rem;
+}
+
+.failed-msg {
+  flex: 1;
+  font-size: 0.82rem;
+  color: #CC0000;
+}
+
+.retry-btn {
+  padding: 5px 14px;
+  background: #CC0000;
+  color: #FFF;
+  border: none;
+  font-family: monospace;
+  font-size: 0.78rem;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.retry-btn:hover:not(:disabled) {
+  background: #AA0000;
+}
+
+.retry-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Left Panel - Report Style */
