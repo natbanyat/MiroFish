@@ -186,8 +186,16 @@ class LLMClient:
         return client
 
     def _uses_max_completion_tokens(self) -> bool:
-        """GPT-5 and newer reasoning-style models expect max_completion_tokens."""
+        """Models that use max_completion_tokens instead of max_tokens."""
         prefixes = ('gpt-5', 'o1', 'o3', 'o4')
+        return self.model.startswith(prefixes)
+
+    def _is_reasoning_model(self) -> bool:
+        """True only for o-series thinking models that support reasoning_effort
+        and do not accept a temperature parameter.
+        gpt-5.x models are standard chat models — fast, temperature-aware,
+        no reasoning_effort — even though they use max_completion_tokens."""
+        prefixes = ('o1', 'o3', 'o4')
         return self.model.startswith(prefixes)
 
     def _build_chat_kwargs(
@@ -206,11 +214,15 @@ class LLMClient:
 
         if self._uses_max_completion_tokens():
             kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
+
+        if self._is_reasoning_model():
+            # o-series: no temperature, optional reasoning_effort
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
         else:
             kwargs["temperature"] = temperature
-            kwargs["max_tokens"] = max_tokens
 
         if response_format:
             kwargs["response_format"] = response_format
@@ -363,7 +375,7 @@ class LLMClient:
         request_tokens = max_tokens
         reasoning_effort = None
 
-        if self._uses_max_completion_tokens():
+        if self._is_reasoning_model():
             request_tokens = max(request_tokens, self.JSON_REASONING_MIN_TOKENS)
             reasoning_effort = "low"
 
