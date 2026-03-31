@@ -1,8 +1,9 @@
 """
-测试Profile格式生成是否符合OASIS要求
-验证：
-1. Twitter Profile生成CSV格式
-2. Reddit Profile生成JSON详细格式
+Smoke test for the current OASIS profile export formats.
+
+This validates the formats actually written by `OasisProfileGenerator`:
+1. Twitter profiles export as the compact OASIS CSV format
+2. Reddit profiles export as the JSON format consumed by the simulation scripts
 """
 
 import os
@@ -17,11 +18,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.services.oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 
 
+def _check_fields(actual_fields, required_fields, label):
+    """Validate required fields and return a list of errors."""
+    missing = sorted(set(required_fields) - set(actual_fields))
+    if missing:
+        print(f"\n   [ERROR] {label} missing fields: {missing}")
+        return [f"{label} missing fields: {missing}"]
+
+    print(f"\n   [PASS] {label} contains all required fields")
+    return []
+
+
 def test_profile_formats():
-    """测试Profile格式"""
+    """Validate the exported profile files and return success/failure."""
     print("=" * 60)
     print("OASIS Profile格式测试")
     print("=" * 60)
+    errors = []
     
     # 创建测试Profile数据
     test_profiles = [
@@ -85,14 +98,15 @@ def test_profile_formats():
         for key, value in rows[0].items():
             print(f"     {key}: {value}")
         
-        # 验证必需字段
-        required_twitter_fields = ['user_id', 'user_name', 'name', 'bio', 
-                                   'friend_count', 'follower_count', 'statuses_count', 'created_at']
-        missing = set(required_twitter_fields) - set(rows[0].keys())
-        if missing:
-            print(f"\n   [错误] 缺少字段: {missing}")
-        else:
-            print(f"\n   [通过] 所有必需字段都存在")
+        required_twitter_fields = ['user_id', 'name', 'username', 'user_char', 'description']
+        errors.extend(_check_fields(rows[0].keys(), required_twitter_fields, "Twitter CSV"))
+
+        if rows[0]['username'] != test_profiles[0].user_name:
+            errors.append("Twitter CSV username mismatch")
+            print("\n   [ERROR] Twitter CSV username mismatch")
+        if test_profiles[0].persona not in rows[0]['user_char']:
+            errors.append("Twitter CSV user_char does not include persona")
+            print("\n   [ERROR] Twitter CSV user_char does not include persona")
         
         # 测试Reddit JSON格式
         print("\n2. 测试Reddit Profile (JSON详细格式)")
@@ -109,45 +123,59 @@ def test_profile_formats():
         print(f"\n   示例数据 (第1条):")
         print(json.dumps(reddit_data[0], ensure_ascii=False, indent=4))
         
-        # 验证详细格式字段
-        required_reddit_fields = ['realname', 'username', 'bio', 'persona']
-        optional_reddit_fields = ['age', 'gender', 'mbti', 'country', 'profession', 'interested_topics']
-        
-        missing = set(required_reddit_fields) - set(reddit_data[0].keys())
-        if missing:
-            print(f"\n   [错误] 缺少必需字段: {missing}")
-        else:
-            print(f"\n   [通过] 所有必需字段都存在")
-        
-        present_optional = set(optional_reddit_fields) & set(reddit_data[0].keys())
-        print(f"   [信息] 可选字段: {present_optional}")
+        required_reddit_fields = [
+            'user_id', 'username', 'name', 'bio', 'persona',
+            'karma', 'created_at', 'age', 'gender', 'mbti', 'country'
+        ]
+        optional_reddit_fields = ['profession', 'interested_topics']
+
+        errors.extend(_check_fields(reddit_data[0].keys(), required_reddit_fields, "Reddit JSON"))
+
+        if reddit_data[0]['username'] != test_profiles[0].user_name:
+            errors.append("Reddit JSON username mismatch")
+            print("\n   [ERROR] Reddit JSON username mismatch")
+        if reddit_data[0]['gender'] not in {'male', 'female', 'other'}:
+            errors.append("Reddit JSON gender is not normalized")
+            print("\n   [ERROR] Reddit JSON gender is not normalized")
+
+        present_optional = sorted(set(optional_reddit_fields) & set(reddit_data[0].keys()))
+        print(f"   [INFO] Optional fields present: {present_optional}")
     
     print("\n" + "=" * 60)
-    print("测试完成!")
+    if errors:
+        print(f"测试失败，共 {len(errors)} 个问题")
+        for error in errors:
+            print(f" - {error}")
+    else:
+        print("测试通过!")
     print("=" * 60)
+    return not errors
 
 
 def show_expected_formats():
-    """显示OASIS期望的格式"""
+    """显示当前导出的Profile格式参考"""
     print("\n" + "=" * 60)
     print("OASIS 期望的Profile格式参考")
     print("=" * 60)
     
     print("\n1. Twitter Profile (CSV格式)")
     print("-" * 40)
-    twitter_example = """user_id,user_name,name,bio,friend_count,follower_count,statuses_count,created_at
-0,user0,User Zero,I am user zero with interests in technology.,100,150,500,2023-01-01
-1,user1,User One,Tech enthusiast and coffee lover.,200,250,1000,2023-01-02"""
+    twitter_example = """user_id,name,username,user_char,description
+0,User Zero,user0,I am user zero with interests in technology. User Zero is analytical and cautious.,I am user zero with interests in technology.
+1,User One,user1,Tech enthusiast and coffee lover. User One reacts quickly to breaking news.,Tech enthusiast and coffee lover."""
     print(twitter_example)
     
     print("\n2. Reddit Profile (JSON详细格式)")
     print("-" * 40)
     reddit_example = [
         {
-            "realname": "James Miller",
+            "user_id": 0,
             "username": "millerhospitality",
+            "name": "James Miller",
             "bio": "Passionate about hospitality & tourism.",
             "persona": "James is a seasoned professional in the Hospitality & Tourism industry...",
+            "karma": 1200,
+            "created_at": "2026-03-17",
             "age": 40,
             "gender": "male",
             "mbti": "ESTJ",
@@ -160,7 +188,7 @@ def show_expected_formats():
 
 
 if __name__ == "__main__":
-    test_profile_formats()
+    success = test_profile_formats()
     show_expected_formats()
-
+    sys.exit(0 if success else 1)
 

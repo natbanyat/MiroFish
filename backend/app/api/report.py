@@ -14,6 +14,7 @@ from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
+from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.api.report')
@@ -134,7 +135,8 @@ def generate_report():
                 agent = ReportAgent(
                     graph_id=graph_id,
                     simulation_id=simulation_id,
-                    simulation_requirement=simulation_requirement
+                    simulation_requirement=simulation_requirement,
+                    boost_llm=LLMClient.from_boost_config()
                 )
                 
                 # 进度回调
@@ -436,6 +438,86 @@ def download_report(report_id: str):
         }), 500
 
 
+@report_bp.route('/<report_id>/pdf', methods=['GET'])
+def download_report_pdf(report_id: str):
+    """
+    Download report as PDF (Markdown → HTML → PDF via WeasyPrint).
+    Falls back to a printable HTML file if WeasyPrint is not installed.
+    """
+    import io
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        md_path = ReportManager._get_report_markdown_path(report_id)
+        if os.path.exists(md_path):
+            with open(md_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+        else:
+            md_content = report.markdown_content or ""
+
+        import markdown as md_lib
+        html_body = md_lib.markdown(md_content, extensions=['fenced_code', 'tables'])
+
+        title = (report.title or report_id).replace('<', '&lt;').replace('>', '&gt;')
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <style>
+    body {{ font-family: Georgia, serif; max-width: 820px; margin: 0 auto; padding: 40px 60px; color: #1a1a1a; line-height: 1.7; }}
+    h1 {{ font-size: 2em; border-bottom: 2px solid #222; padding-bottom: 12px; margin-bottom: 8px; }}
+    h2 {{ font-size: 1.4em; margin-top: 2.5em; color: #222; border-left: 3px solid #555; padding-left: 12px; }}
+    h3 {{ font-size: 1.1em; color: #333; }}
+    p {{ margin: 0.8em 0; }}
+    blockquote {{ border-left: 3px solid #ccc; margin: 0; padding: 4px 16px; color: #555; }}
+    pre {{ background: #f4f4f4; padding: 12px 16px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; }}
+    code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; font-family: monospace; }}
+    pre code {{ background: none; padding: 0; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px 12px; text-align: left; }}
+    th {{ background: #f0f0f0; font-weight: 600; }}
+    @page {{ margin: 2cm; }}
+  </style>
+</head>
+<body>
+{html_body}
+</body>
+</html>"""
+
+        try:
+            import weasyprint
+            pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+            return send_file(
+                io.BytesIO(pdf_bytes),
+                as_attachment=True,
+                download_name=f"{report_id}.pdf",
+                mimetype='application/pdf'
+            )
+        except ImportError:
+            # WeasyPrint not available — serve printable HTML instead
+            logger.warning("weasyprint not installed; serving printable HTML fallback")
+            return send_file(
+                io.BytesIO(html.encode('utf-8')),
+                as_attachment=False,
+                download_name=f"{report_id}_printable.html",
+                mimetype='text/html'
+            )
+
+    except Exception as e:
+        logger.error(f"PDF generation failed: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 @report_bp.route('/<report_id>', methods=['DELETE'])
 def delete_report(report_id: str):
     """删除报告"""
@@ -540,7 +622,8 @@ def chat_with_report_agent():
         agent = ReportAgent(
             graph_id=graph_id,
             simulation_id=simulation_id,
-            simulation_requirement=simulation_requirement
+            simulation_requirement=simulation_requirement,
+            boost_llm=LLMClient.from_boost_config()
         )
         
         result = agent.chat(message=message, chat_history=chat_history)
