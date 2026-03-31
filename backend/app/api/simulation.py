@@ -234,6 +234,8 @@ def create_simulation():
         return jsonify({
             "success": False,
             "error": str(e),
+            "step": "simulation_create",
+            "retryable": True,
             "traceback": traceback.format_exc()
         }), 500
 

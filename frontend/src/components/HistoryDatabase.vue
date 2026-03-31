@@ -298,21 +298,17 @@ const getCardStyle = (index) => {
   }
 }
 
-// 根据轮数进度获取样式类
+// 根据状态和轮数获取样式类
 const getProgressClass = (simulation) => {
+  if (simulation.report_id) return 'completed'
+  const status = simulation.status || ''
+  if (status === 'failed') return 'failed'
+  if (status === 'running') return 'in-progress'
   const current = simulation.current_round || 0
   const total = simulation.total_rounds || 0
-  
-  if (total === 0 || current === 0) {
-    // 未开始
-    return 'not-started'
-  } else if (current >= total) {
-    // 已完成
-    return 'completed'
-  } else {
-    // 进行中
-    return 'in-progress'
-  }
+  if (total > 0 && current > 0 && current < total) return 'in-progress'
+  if (status === 'completed' || status === 'stopped' || (total > 0 && current >= total)) return 'simulated'
+  return 'not-started'
 }
 
 // 格式化日期（只显示日期部分）
@@ -361,10 +357,15 @@ const formatSimulationId = (simulationId) => {
 
 // 格式化轮数显示（当前轮/总轮数）
 const formatRounds = (simulation) => {
+  if (simulation.report_id) return 'Completed'
+  const status = simulation.status || ''
+  if (status === 'failed') return 'Failed'
+  if (status === 'running') return 'Running'
   const current = simulation.current_round || 0
   const total = simulation.total_rounds || 0
-  if (total === 0) return 'Not started'
-  return `${current}/${total} rounds`
+  if (total > 0 && current > 0 && current < total) return `Running ${current}/${total}`
+  if (status === 'completed' || status === 'stopped' || (total > 0 && current >= total)) return 'Simulated'
+  return 'Draft'
 }
 
 // 获取文件类型（用于样式）
@@ -411,12 +412,20 @@ const closeModal = () => {
   selectedProject.value = null
 }
 
+// Build shared history query params for stage navigation
+const buildHistQuery = () => ({
+  hist_project_id: selectedProject.value?.project_id || undefined,
+  hist_simulation_id: selectedProject.value?.simulation_id || undefined,
+  hist_report_id: selectedProject.value?.report_id || undefined,
+})
+
 // 导航到图谱构建页面（Project）
 const goToProject = () => {
   if (selectedProject.value?.project_id) {
     router.push({
       name: 'Process',
-      params: { projectId: selectedProject.value.project_id }
+      params: { projectId: selectedProject.value.project_id },
+      query: buildHistQuery()
     })
     closeModal()
   }
@@ -427,7 +436,8 @@ const goToSimulation = () => {
   if (selectedProject.value?.simulation_id) {
     router.push({
       name: 'Simulation',
-      params: { simulationId: selectedProject.value.simulation_id }
+      params: { simulationId: selectedProject.value.simulation_id },
+      query: buildHistQuery()
     })
     closeModal()
   }
@@ -438,7 +448,8 @@ const goToReport = () => {
   if (selectedProject.value?.report_id) {
     router.push({
       name: 'Report',
-      params: { reportId: selectedProject.value.report_id }
+      params: { reportId: selectedProject.value.report_id },
+      query: buildHistQuery()
     })
     closeModal()
   }
@@ -461,7 +472,7 @@ const resumeInteraction = async () => {
   router.push({
     name: 'Interaction',
     params: reportId ? { reportId } : {},
-    query: { simulation_id: simulationId, reopen: '1' }
+    query: { ...buildHistQuery(), simulation_id: simulationId, reopen: '1' }
   })
 }
 
@@ -776,9 +787,11 @@ onUnmounted(() => {
 }
 
 /* 进度状态颜色 */
-.card-progress.completed { color: #10B981; }    /* 已完成 - 绿色 */
+.card-progress.completed { color: #10B981; }    /* 完成含报告 - 绿色 */
+.card-progress.simulated { color: #3B82F6; }    /* 模拟完成 - 蓝色 */
 .card-progress.in-progress { color: #F59E0B; }  /* 进行中 - 橙色 */
-.card-progress.not-started { color: #9CA3AF; }  /* 未开始 - 灰色 */
+.card-progress.not-started { color: #9CA3AF; }  /* 草稿 - 灰色 */
+.card-progress.failed { color: #EF4444; }       /* 失败 - 红色 */
 .card-status.pending { color: #9CA3AF; }
 
 /* 文件列表区域 */
@@ -979,8 +992,10 @@ onUnmounted(() => {
 
 /* 进度状态颜色 - 底部 */
 .card-footer .card-progress.completed { color: #10B981; }
+.card-footer .card-progress.simulated { color: #3B82F6; }
 .card-footer .card-progress.in-progress { color: #F59E0B; }
 .card-footer .card-progress.not-started { color: #9CA3AF; }
+.card-footer .card-progress.failed { color: #EF4444; }
 
 /* 底部装饰线 */
 .card-bottom-line {

@@ -193,6 +193,8 @@ def generate_report():
         return jsonify({
             "success": False,
             "error": str(e),
+            "step": "report_generate",
+            "retryable": True,
             "traceback": traceback.format_exc()
         }), 500
 

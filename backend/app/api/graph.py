@@ -262,6 +262,8 @@ def generate_ontology():
         return jsonify({
             "success": False,
             "error": str(e),
+            "step": "ontology",
+            "retryable": True,
             "traceback": traceback.format_exc()
         }), 500
 
@@ -522,6 +524,8 @@ def build_graph():
         return jsonify({
             "success": False,
             "error": str(e),
+            "step": "graph_build",
+            "retryable": True,
             "traceback": traceback.format_exc()
         }), 500
 

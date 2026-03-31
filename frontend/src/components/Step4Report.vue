@@ -8,16 +8,25 @@
           <!-- Report Header -->
           <div class="report-header-block">
             <div class="report-meta">
-              <span class="report-tag">Prediction Report</span>
+              <span class="report-tag">Investment Memo</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
-              <button
-                v-if="isComplete && reportId"
-                class="download-pdf-btn"
-                :disabled="isDownloading"
-                @click="handleDownloadPdf"
-              >
-                {{ isDownloading ? 'Generating...' : 'Download PDF' }}
-              </button>
+              <div class="report-actions" v-if="isComplete">
+                <button
+                  class="copy-md-btn"
+                  :class="{ copied: markdownCopied }"
+                  @click="copyAsMarkdown"
+                >
+                  {{ markdownCopied ? 'Copied!' : 'Copy as MD' }}
+                </button>
+                <button
+                  v-if="reportId"
+                  class="download-pdf-btn"
+                  :disabled="isDownloading"
+                  @click="handleDownloadPdf"
+                >
+                  {{ isDownloading ? 'Generating...' : 'Download PDF' }}
+                </button>
+              </div>
             </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
@@ -26,19 +35,21 @@
 
           <!-- Sections List -->
           <div class="sections-list">
-            <div 
-              v-for="(section, idx) in reportOutline.sections" 
+            <div
+              v-for="(section, idx) in reportOutline.sections"
               :key="idx"
               class="report-section-item"
-              :class="{ 
+              :class="{
                 'is-active': currentSectionIndex === idx + 1,
                 'is-completed': isSectionCompleted(idx + 1),
-                'is-pending': !isSectionCompleted(idx + 1) && currentSectionIndex !== idx + 1
+                'is-pending': !isSectionCompleted(idx + 1) && currentSectionIndex !== idx + 1,
+                [`memo-section-${getMemoSectionType(idx)}`]: true
               }"
             >
               <div class="section-header-row" @click="toggleSectionCollapse(idx)" :class="{ 'clickable': isSectionCompleted(idx + 1) }">
                 <span class="section-number">{{ String(idx + 1).padStart(2, '0') }}</span>
                 <h3 class="section-title">{{ section.title }}</h3>
+                <span class="memo-tag">{{ getMemoSectionLabel(idx) }}</span>
                 <svg 
                   v-if="isSectionCompleted(idx + 1)" 
                   class="collapse-icon" 
@@ -66,7 +77,12 @@
                       <path d="M12 2a10 10 0 0 1 10 10" stroke-width="4" stroke="#4B5563" stroke-linecap="round"></path>
                     </svg>
                   </div>
-                  <span class="loading-text">Generating {{ section.title }}...</span>
+                  <div class="loading-detail">
+                    <span class="loading-text">Writing {{ section.title }}...</span>
+                    <span v-if="activeToolName" class="loading-agent">
+                      <span class="agent-dot"></span>{{ activeToolName }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -469,6 +485,61 @@ const goToInteraction = () => {
   }
 }
 
+// Copy as Markdown
+const copyAsMarkdown = async () => {
+  if (!reportOutline.value) return
+  const lines = []
+  lines.push(`# ${reportOutline.value.title}`)
+  if (reportOutline.value.summary) {
+    lines.push(`\n> ${reportOutline.value.summary}`)
+  }
+  lines.push('')
+  const sections = reportOutline.value.sections || []
+  sections.forEach((section, idx) => {
+    const content = generatedSections.value[idx + 1]
+    if (content) {
+      lines.push(`## ${section.title}`)
+      lines.push('')
+      lines.push(content)
+      lines.push('')
+    }
+  })
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'))
+    markdownCopied.value = true
+    setTimeout(() => { markdownCopied.value = false }, 2000)
+  } catch (e) {
+    console.error('Clipboard write failed:', e)
+  }
+}
+
+// Investment memo section type mapping
+const MEMO_SECTION_TYPES = ['exec-summary', 'key-findings', 'scenario-analysis', 'implications', 'watchpoints']
+const MEMO_SECTION_LABELS = ['Executive Summary', 'Key Findings', 'Scenario Analysis', 'Implications', 'Watchpoints']
+
+const getMemoSectionType = (idx) => {
+  return MEMO_SECTION_TYPES[idx] || `section-${idx}`
+}
+
+const getMemoSectionLabel = (idx) => {
+  return MEMO_SECTION_LABELS[idx] || ''
+}
+
+// Active tool name from the latest tool_call log
+const activeToolName = computed(() => {
+  if (!currentSectionIndex.value) return null
+  // Walk backwards to find the most recent tool_call for the current section
+  for (let i = agentLogs.value.length - 1; i >= 0; i--) {
+    const log = agentLogs.value[i]
+    if (log.action === 'tool_call' && log.section_index === currentSectionIndex.value) {
+      return getToolDisplayName(log.details?.tool_name) || null
+    }
+    // Stop looking back once we hit the section_start for this section
+    if (log.action === 'section_start' && log.section_index === currentSectionIndex.value) break
+  }
+  return null
+})
+
 // State
 const agentLogs = ref([])
 const consoleLogs = ref([])
@@ -481,6 +552,7 @@ const expandedContent = ref(new Set())
 const expandedLogs = ref(new Set())
 const collapsedSections = ref(new Set())
 const isComplete = ref(false)
+const markdownCopied = ref(false)
 const isFailed = ref(false)
 const isRetrying = ref(false)
 const isDownloading = ref(false)
@@ -2509,8 +2581,14 @@ watch(() => props.reportId, (newId) => {
   letter-spacing: 0.02em;
 }
 
-.download-pdf-btn {
+.report-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.download-pdf-btn {
   padding: 4px 12px;
   font-size: 11px;
   font-weight: 600;
@@ -2533,6 +2611,71 @@ watch(() => props.reportId, (newId) => {
 .download-pdf-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.copy-md-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  color: #374151;
+  background: #F9FAFB;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.copy-md-btn:hover {
+  background: #4B5563;
+  color: #FFFFFF;
+  border-color: #4B5563;
+}
+
+.copy-md-btn.copied {
+  background: #16A34A;
+  color: #FFFFFF;
+  border-color: #16A34A;
+}
+
+/* Investment memo section type borders */
+.memo-section-exec-summary .section-header-row {
+  border-left: 3px solid #000;
+  padding-left: 14px;
+}
+
+.memo-section-key-findings .section-header-row {
+  border-left: 3px solid #2563EB;
+  padding-left: 14px;
+}
+
+.memo-section-scenario-analysis .section-header-row {
+  border-left: 3px solid #7C3AED;
+  padding-left: 14px;
+}
+
+.memo-section-implications .section-header-row {
+  border-left: 3px solid #D97706;
+  padding-left: 14px;
+}
+
+.memo-section-watchpoints .section-header-row {
+  border-left: 3px solid #DC2626;
+  padding-left: 14px;
+}
+
+/* Memo section label tag */
+.memo-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9CA3AF;
+  margin-left: 4px;
+  align-self: center;
+  white-space: nowrap;
 }
 
 .main-title {
@@ -2693,8 +2836,34 @@ watch(() => props.reportId, (newId) => {
 }
 
 .generated-content :deep(strong) {
-  font-weight: 600;
+  font-weight: 700;
   color: #111827;
+}
+
+/* Highlight numbers that appear in strong tags (e.g. **85%**, **$2.3B**) */
+.generated-content :deep(strong):has-text {
+  color: #111827;
+}
+
+/* Executive summary section gets a distinct call-out style for the first paragraph */
+.memo-section-exec-summary .generated-content :deep(p:first-of-type) {
+  font-size: 16px;
+  line-height: 1.75;
+  color: #1F2937;
+  background: #F8FAFC;
+  border-left: 3px solid #000;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+/* Watchpoints get a subtle warning background */
+.memo-section-watchpoints .generated-content :deep(.md-ul),
+.memo-section-watchpoints .generated-content :deep(.md-li) {
+  color: #7F1D1D;
+}
+
+.memo-section-watchpoints .generated-content :deep(.md-li)::marker {
+  color: #DC2626;
 }
 
 /* Loading State */
@@ -2714,12 +2883,45 @@ watch(() => props.reportId, (newId) => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+
+.loading-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .loading-text {
   font-family: 'Times New Roman', Times, serif;
   font-size: 15px;
   color: #4B5563;
+}
+
+.loading-agent {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #8B5CF6;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.agent-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8B5CF6;
+  animation: pulse-dot 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
 }
 
 .cursor-blink {

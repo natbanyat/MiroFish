@@ -48,6 +48,19 @@
 
       <!-- Right Panel: Step2 环境搭建 -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
+        <!-- Resume banner: shown when a completed report already exists -->
+        <div v-if="existingReportId" class="resume-banner">
+          <div class="resume-banner-left">
+            <span class="resume-icon">◆</span>
+            <div>
+              <div class="resume-title">Report Already Generated</div>
+              <div class="resume-sub">A completed report exists for this simulation.</div>
+            </div>
+          </div>
+          <button class="resume-view-btn" @click="router.push({ name: 'Report', params: { reportId: existingReportId } })">
+            View Report →
+          </button>
+        </div>
         <Step2EnvSetup
           :simulationId="currentSimulationId"
           :projectData="projectData"
@@ -60,6 +73,9 @@
         />
       </div>
     </main>
+
+    <!-- Stage navigation for history playback -->
+    <StageNav :currentStep="2" />
   </div>
 </template>
 
@@ -68,8 +84,10 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
+import StageNav from '../components/StageNav.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
+import { generateReport } from '../api/report'
 
 const route = useRoute()
 const router = useRouter()
@@ -89,6 +107,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+const existingReportId = ref(null) // set if a completed report already exists
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -243,14 +262,25 @@ const loadSimulationData = async () => {
     const simRes = await getSimulation(currentSimulationId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
-      
+
+      // Check if a completed report already exists for this simulation
+      try {
+        const reportCheck = await generateReport({ simulation_id: currentSimulationId.value, force_regenerate: false })
+        if (reportCheck.success && reportCheck.data?.already_generated && reportCheck.data?.report_id) {
+          existingReportId.value = reportCheck.data.report_id
+          addLog(`Existing report found: ${reportCheck.data.report_id}`)
+        }
+      } catch (e) {
+        // Non-blocking — ignore if report check fails
+      }
+
       // 获取 project 信息
       if (simData.project_id) {
         const projRes = await getProject(simData.project_id)
         if (projRes.success && projRes.data) {
           projectData.value = projRes.data
           addLog(`Project loaded: ${projRes.data.project_id}`)
-          
+
           // 获取 graph 数据
           if (projRes.data.graph_id) {
             await loadGraph(projRes.data.graph_id)
@@ -427,7 +457,65 @@ onMounted(async () => {
   will-change: width, opacity, transform;
 }
 
+.panel-wrapper.right {
+  display: flex;
+  flex-direction: column;
+}
+
 .panel-wrapper.left {
   border-right: 1px solid #EAEAEA;
+}
+
+/* Resume banner */
+.resume-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #F0FFF4;
+  border-bottom: 1px solid #C6F6D5;
+  flex-shrink: 0;
+}
+
+.resume-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.resume-icon {
+  font-size: 18px;
+  color: #22C55E;
+}
+
+.resume-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: #166534;
+}
+
+.resume-sub {
+  font-size: 11px;
+  color: #4ADE80;
+  color: #15803D;
+  margin-top: 1px;
+}
+
+.resume-view-btn {
+  background: #16A34A;
+  color: #FFF;
+  border: none;
+  padding: 8px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.resume-view-btn:hover {
+  background: #15803D;
 }
 </style>
