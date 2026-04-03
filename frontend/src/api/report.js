@@ -10,10 +10,11 @@ export const generateReport = (data) => {
 
 /**
  * 获取报告生成状态
- * @param {string} reportId
+ * Backend supports report_id, simulation_id, or task_id.
+ * @param {Object} params - { report_id?, simulation_id?, task_id? }
  */
-export const getReportStatus = (reportId) => {
-  return service.get(`/api/report/generate/status`, { params: { report_id: reportId } })
+export const getReportStatus = (params = {}) => {
+  return service.get(`/api/report/generate/status`, { params })
 }
 
 /**

@@ -298,16 +298,28 @@ const getCardStyle = (index) => {
   }
 }
 
+const getLifecycleStatus = (simulation) => {
+  const runnerStatus = simulation.runner_status || ''
+  const status = simulation.status || ''
+  return runnerStatus || status || 'idle'
+}
+
+const getNormalizedRounds = (simulation) => {
+  return {
+    current: simulation.current_round ?? 0,
+    total: simulation.total_rounds ?? 0
+  }
+}
+
 // 根据状态和轮数获取样式类
 const getProgressClass = (simulation) => {
   if (simulation.report_id) return 'completed'
-  const status = simulation.status || ''
-  if (status === 'failed') return 'failed'
-  if (status === 'running') return 'in-progress'
-  const current = simulation.current_round || 0
-  const total = simulation.total_rounds || 0
+  const lifecycleStatus = getLifecycleStatus(simulation)
+  if (lifecycleStatus === 'failed') return 'failed'
+  if (['starting', 'running', 'pausing', 'paused', 'stopping'].includes(lifecycleStatus)) return 'in-progress'
+  const { current, total } = getNormalizedRounds(simulation)
   if (total > 0 && current > 0 && current < total) return 'in-progress'
-  if (status === 'completed' || status === 'stopped' || (total > 0 && current >= total)) return 'simulated'
+  if (['completed', 'stopped'].includes(lifecycleStatus) || (total > 0 && current >= total)) return 'simulated'
   return 'not-started'
 }
 
@@ -358,13 +370,14 @@ const formatSimulationId = (simulationId) => {
 // 格式化轮数显示（当前轮/总轮数）
 const formatRounds = (simulation) => {
   if (simulation.report_id) return 'Completed'
-  const status = simulation.status || ''
-  if (status === 'failed') return 'Failed'
-  if (status === 'running') return 'Running'
-  const current = simulation.current_round || 0
-  const total = simulation.total_rounds || 0
+  const lifecycleStatus = getLifecycleStatus(simulation)
+  if (lifecycleStatus === 'failed') return 'Failed'
+  const { current, total } = getNormalizedRounds(simulation)
+  if (['starting', 'running', 'pausing', 'paused', 'stopping'].includes(lifecycleStatus)) {
+    return total > 0 ? `Running ${current}/${total}` : 'Running'
+  }
   if (total > 0 && current > 0 && current < total) return `Running ${current}/${total}`
-  if (status === 'completed' || status === 'stopped' || (total > 0 && current >= total)) return 'Simulated'
+  if (['completed', 'stopped'].includes(lifecycleStatus) || (total > 0 && current >= total)) return 'Simulated'
   return 'Draft'
 }
 

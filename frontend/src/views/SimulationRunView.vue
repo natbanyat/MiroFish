@@ -94,7 +94,13 @@ const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
-const currentStatus = ref('processing') // processing | completed | error
+const simulationStatus = ref({
+  status: 'processing',
+  runnerStatus: 'idle',
+  progressPercent: 0,
+  currentRound: 0,
+  totalRounds: 0
+})
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -110,17 +116,32 @@ const rightPanelStyle = computed(() => {
 })
 
 // --- Status Computed ---
-const statusClass = computed(() => {
-  return currentStatus.value
+const normalizedStatus = computed(() => {
+  return simulationStatus.value.status || 'processing'
 })
+
+const normalizedProgressPercent = computed(() => {
+  const value = Number(simulationStatus.value.progressPercent || 0)
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
+})
+
+const normalizedRoundSummary = computed(() => {
+  const currentRound = Number(simulationStatus.value.currentRound || 0)
+  const totalRounds = Number(simulationStatus.value.totalRounds || maxRounds.value || 0)
+  if (!currentRound || !totalRounds) return ''
+  return ' · R' + currentRound + '/' + totalRounds
+})
+
+const statusClass = computed(() => normalizedStatus.value)
 
 const statusText = computed(() => {
-  if (currentStatus.value === 'error') return 'Error'
-  if (currentStatus.value === 'completed') return 'Completed'
-  return 'Running'
+  if (normalizedStatus.value === 'error') return 'Error'
+  if (normalizedStatus.value === 'completed') return 'Completed'
+  const progressLabel = normalizedProgressPercent.value > 0 ? ' · ' + normalizedProgressPercent.value.toFixed(1) + '%' : ''
+  return 'Running' + progressLabel + normalizedRoundSummary.value
 })
 
-const isSimulating = computed(() => currentStatus.value === 'processing')
+const isSimulating = computed(() => normalizedStatus.value === 'processing')
 
 // --- Helpers ---
 const addLog = (msg) => {
@@ -131,8 +152,19 @@ const addLog = (msg) => {
   }
 }
 
-const updateStatus = (status) => {
-  currentStatus.value = status
+const updateStatus = (statusUpdate) => {
+  if (typeof statusUpdate === 'string') {
+    simulationStatus.value = {
+      ...simulationStatus.value,
+      status: statusUpdate
+    }
+    return
+  }
+
+  simulationStatus.value = {
+    ...simulationStatus.value,
+    ...(statusUpdate || {})
+  }
 }
 
 // --- Layout Methods ---
@@ -207,6 +239,14 @@ const loadSimulationData = async () => {
     const simRes = await getSimulation(currentSimulationId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
+
+      updateStatus({
+        status: simData.status === 'failed' ? 'error' : (simData.status === 'completed' ? 'completed' : (simData.runner_status === 'failed' ? 'error' : (['completed', 'stopped'].includes(simData.runner_status) ? 'completed' : 'processing'))),
+        runnerStatus: simData.runner_status || simData.status || 'idle',
+        progressPercent: simData.progress_percent || 0,
+        currentRound: simData.current_round || 0,
+        totalRounds: simData.total_rounds || maxRounds.value || 0
+      })
       
       // 获取 simulation config 以获取 minutes_per_round
       try {

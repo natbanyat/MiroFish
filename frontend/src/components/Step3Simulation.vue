@@ -338,6 +338,41 @@ const redditActionsCount = computed(() => {
   return allActions.value.filter(a => a.platform === 'reddit').length
 })
 
+const normalizedRunnerStatus = computed(() => {
+  return runStatus.value.runner_status || runStatus.value.status || 'idle'
+})
+
+const aggregateRound = computed(() => {
+  const explicitRound = Number(runStatus.value.current_round || 0)
+  if (explicitRound > 0) return explicitRound
+  return Math.max(
+    Number(runStatus.value.twitter_current_round || 0),
+    Number(runStatus.value.reddit_current_round || 0)
+  )
+})
+
+const aggregateProgressPercent = computed(() => {
+  const explicitProgress = Number(runStatus.value.progress_percent)
+  if (Number.isFinite(explicitProgress) && explicitProgress > 0) {
+    return Math.max(0, Math.min(100, explicitProgress))
+  }
+
+  const totalRounds = Number(runStatus.value.total_rounds || props.maxRounds || 0)
+  if (totalRounds <= 0) return 0
+  return Math.round((aggregateRound.value / totalRounds) * 1000) / 10
+})
+
+const normalizedSimulationStatus = computed(() => {
+  if (normalizedRunnerStatus.value === 'failed' || runStatus.value.status === 'failed') return 'error'
+  if (['completed', 'stopped'].includes(normalizedRunnerStatus.value)) return 'completed'
+  if (['running', 'starting', 'processing'].includes(normalizedRunnerStatus.value) || runStatus.value.status === 'running') return 'processing'
+  return 'idle'
+})
+
+const isSimulationFailed = computed(() => {
+  return normalizedSimulationStatus.value === 'error'
+})
+
 // 格式化模拟流逝时间（根据轮次和每轮分钟数计算）
 const formatElapsedTime = (currentRound) => {
   if (!currentRound || currentRound <= 0) return '0h 0m'
@@ -360,6 +395,16 @@ const redditElapsedTime = computed(() => {
 // Methods
 const addLog = (msg) => {
   emit('add-log', msg)
+}
+
+const emitStatusUpdate = (status = normalizedSimulationStatus.value) => {
+  emit('update-status', {
+    status,
+    runnerStatus: normalizedRunnerStatus.value,
+    progressPercent: aggregateProgressPercent.value,
+    currentRound: aggregateRound.value,
+    totalRounds: Number(runStatus.value.total_rounds || props.maxRounds || 0)
+  })
 }
 
 // 重置所有状态（用于重新启动模拟）
@@ -389,7 +434,7 @@ const doStartSimulation = async () => {
   isStarting.value = true
   startError.value = null
   addLog('Starting dual-world parallel simulation...')
-  emit('update-status', 'processing')
+  emitStatusUpdate('processing')
   
   try {
     const params = {
@@ -417,18 +462,19 @@ const doStartSimulation = async () => {
       
       phase.value = 1
       runStatus.value = res.data
+      emitStatusUpdate()
       
       startStatusPolling()
       startDetailPolling()
     } else {
       startError.value = res.error || 'Start failed'
       addLog(`✗ Start failed: ${res.error || 'Unknown error'}`)
-      emit('update-status', 'error')
+      emitStatusUpdate('error')
     }
   } catch (err) {
     startError.value = err.message
     addLog(`✗ Start error: ${err.message}`)
-    emit('update-status', 'error')
+    emitStatusUpdate('error')
   } finally {
     isStarting.value = false
   }
@@ -448,7 +494,7 @@ const handleStopSimulation = async () => {
       addLog('✓ Simulation stopped')
       phase.value = 2
       stopPolling()
-      emit('update-status', 'completed')
+      emitStatusUpdate('completed')
     } else {
       addLog(`Stop failed: ${res.error || 'Unknown error'}`)
     }
@@ -496,6 +542,8 @@ const fetchRunStatus = async () => {
       const data = res.data
       
       runStatus.value = data
+      const runnerStatus = data.runner_status || data.status || 'idle'
+      emitStatusUpdate()
       
       // 分别检测各平台的轮次变化并输出日志
       if (data.twitter_current_round > prevTwitterRound.value) {
@@ -508,13 +556,23 @@ const fetchRunStatus = async () => {
         prevRedditRound.value = data.reddit_current_round
       }
       
-      // 检测模拟是否已完成（通过 runner_status 或平台完成状态判断）
-      const isCompleted = data.runner_status === 'completed' || data.runner_status === 'stopped'
+      const isCompleted = runnerStatus === 'completed' || runnerStatus === 'stopped'
+      const isFailed = runnerStatus === 'failed' || data.status === 'failed'
       
       // 额外检查：如果后端还没来得及更新 runner_status，但平台已经报告完成
       // 通过检测 twitter_completed 和 reddit_completed 状态判断
       const platformsCompleted = checkPlatformsCompleted(data)
       
+      if (isFailed) {
+        const failureMessage = data.run_error || data.error || 'Simulation failed'
+        startError.value = failureMessage
+        addLog(`✗ Simulation failed: ${failureMessage}`)
+        phase.value = 2
+        stopPolling()
+        emitStatusUpdate('error')
+        return
+      }
+
       if (isCompleted || platformsCompleted) {
         if (platformsCompleted && !isCompleted) {
           addLog('✓ All platform simulations have ended')
@@ -522,7 +580,7 @@ const fetchRunStatus = async () => {
         addLog('✓ Simulation completed')
         phase.value = 2
         stopPolling()
-        emit('update-status', 'completed')
+        emitStatusUpdate('completed')
       }
     }
   } catch (err) {

@@ -33,6 +33,33 @@ from .zep_tools import (
 logger = get_logger('mirofish.report_agent')
 
 
+class ReportGenerationError(Exception):
+    """Structured report-generation failure with retryability metadata."""
+
+    def __init__(self, message: str, *, error_type: str = "unknown", retryable: bool = False,
+                 provider: Optional[str] = None, model: Optional[str] = None,
+                 stage: Optional[str] = None, raw_error: Optional[str] = None):
+        super().__init__(message)
+        self.message = message
+        self.error_type = error_type
+        self.retryable = retryable
+        self.provider = provider
+        self.model = model
+        self.stage = stage
+        self.raw_error = raw_error or message
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "message": self.message,
+            "error_type": self.error_type,
+            "retryable": self.retryable,
+            "provider": self.provider,
+            "model": self.model,
+            "stage": self.stage,
+            "raw_error": self.raw_error,
+        }
+
+
 class ReportLogger:
     """
     Report Agent 详细日志记录器
@@ -290,7 +317,7 @@ class ReportLogger:
             }
         )
     
-    def log_error(self, error_message: str, stage: str, section_title: str = None):
+    def log_error(self, error_message: str, stage: str, section_title: str = None, error_details: Dict[str, Any] = None):
         """记录错误"""
         self.log(
             action="error",
@@ -299,6 +326,7 @@ class ReportLogger:
             section_index=None,
             details={
                 "error": error_message,
+                "error_details": error_details,
                 "message": f"发生错误: {error_message}"
             }
         )
@@ -451,6 +479,7 @@ class Report:
     created_at: str = ""
     completed_at: str = ""
     error: Optional[str] = None
+    error_details: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -463,7 +492,8 @@ class Report:
             "markdown_content": self.markdown_content,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
-            "error": self.error
+            "error": self.error,
+            "error_details": self.error_details
         }
 
 
@@ -676,6 +706,55 @@ class ReportAgent:
         self.console_logger: Optional[ReportConsoleLogger] = None
         
         logger.info(f"ReportAgent 初始化完成: graph_id={graph_id}, simulation_id={simulation_id}")
+
+    def _get_llm_context(self, llm_client: Optional[LLMClient] = None) -> Dict[str, Optional[str]]:
+        client = llm_client or self.boost_llm or self.llm
+        return {
+            "provider": getattr(client, "provider", None),
+            "model": getattr(client, "model", None),
+        }
+
+    def _build_generation_error(
+        self,
+        exc: Exception,
+        *,
+        stage: str,
+        llm_client: Optional[LLMClient] = None,
+        default_message: Optional[str] = None,
+    ) -> ReportGenerationError:
+        llm_context = self._get_llm_context(llm_client)
+
+        if isinstance(exc, ReportGenerationError):
+            if not exc.provider:
+                exc.provider = llm_context.get("provider")
+            if not exc.model:
+                exc.model = llm_context.get("model")
+            if not exc.stage:
+                exc.stage = stage
+            return exc
+
+        message = default_message or str(exc) or "报告生成失败"
+        error_type = "provider_error"
+        retryable = False
+
+        if isinstance(exc, RateLimitError):
+            error_type = "rate_limit"
+            retryable = True
+            message = default_message or "报告生成触发模型限流，请稍后重试"
+        elif isinstance(exc, (APIConnectionError, APITimeoutError)):
+            error_type = "provider_unavailable"
+            retryable = True
+            message = default_message or "报告生成调用模型服务失败，请稍后重试"
+
+        return ReportGenerationError(
+            message,
+            error_type=error_type,
+            retryable=retryable,
+            provider=llm_context.get("provider"),
+            model=llm_context.get("model"),
+            stage=stage,
+            raw_error=str(exc),
+        )
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """定义可用工具"""
@@ -979,6 +1058,9 @@ class ReportAgent:
             logger.info(f"大纲规划完成: {len(sections)} 个章节")
             return outline
             
+        except (APIConnectionError, APITimeoutError, RateLimitError) as e:
+            logger.error(f"大纲规划失败: {str(e)}")
+            raise self._build_generation_error(e, stage="planning", llm_client=self.llm)
         except Exception as e:
             logger.error(f"大纲规划失败: {str(e)}")
             # 返回默认大纲（3个章节，作为fallback）
@@ -1062,6 +1144,7 @@ class ReportAgent:
         conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
         used_tools = set()  # 记录已调用过的工具名
         all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+        last_llm_error: Optional[Exception] = None
 
         # 报告上下文，用于InsightForge的子问题生成
         report_context = f"章节标题: {section.title}\n模拟需求: {self.simulation_requirement}"
@@ -1085,6 +1168,7 @@ class ReportAgent:
                 )
             except (APIConnectionError, APITimeoutError, RateLimitError) as _e:
                 logger.warning(f"LLM API error in ReACT loop: {_e}")
+                last_llm_error = _e
                 response = None
 
             # 检查 LLM 返回是否为 None（API 异常或内容为空）
@@ -1098,6 +1182,7 @@ class ReportAgent:
                 # 最后一次迭代也返回 None，跳出循环进入强制收尾
                 break
 
+            last_llm_error = None
             logger.debug(f"LLM响应: {response[:200]}...")
 
             # 解析一次，复用结果
@@ -1293,12 +1378,18 @@ class ReportAgent:
             )
         except (APIConnectionError, APITimeoutError, RateLimitError) as _e:
             logger.warning(f"Force-final LLM error: {_e}")
+            last_llm_error = _e
             response = None
 
         # 检查强制收尾时 LLM 返回是否为 None
         if response is None:
-            logger.error(f"章节 {section.title} 强制收尾时 LLM 返回 None，使用默认错误提示")
-            final_answer = f"（本章节生成失败：LLM 返回空响应，请稍后重试）"
+            logger.error(f"章节 {section.title} 强制收尾时 LLM 返回 None，终止整个报告生成")
+            raise self._build_generation_error(
+                last_llm_error or RuntimeError("LLM returned empty response"),
+                stage="generating",
+                llm_client=self.boost_llm,
+                default_message=f"章节《{section.title}》生成失败，请稍后重试",
+            )
         elif "Final Answer:" in response:
             final_answer = response.split("Final Answer:")[-1].strip()
         else:
@@ -1525,18 +1616,22 @@ class ReportAgent:
             
         except Exception as e:
             logger.error(f"报告生成失败: {str(e)}")
+            failure = self._build_generation_error(e, stage="failed")
             report.status = ReportStatus.FAILED
-            report.error = str(e)
+            report.error = failure.message
+            report.error_details = failure.to_dict()
             
             # 记录错误日志
             if self.report_logger:
-                self.report_logger.log_error(str(e), "failed")
+                self.report_logger.log_error(failure.message, "failed", error_details=failure.to_dict())
             
             # 保存失败状态
             try:
+                existing_progress = ReportManager.get_progress(report_id) or {}
+                failed_progress = existing_progress.get("progress", 0)
                 ReportManager.save_report(report)
                 ReportManager.update_progress(
-                    report_id, "failed", -1, f"报告生成失败: {str(e)}",
+                    report_id, "failed", failed_progress, f"报告生成失败: {failure.message}",
                     completed_sections=completed_section_titles
                 )
             except Exception:
@@ -2018,7 +2113,7 @@ class ReportManager:
         
         progress_data = {
             "status": status,
-            "progress": progress,
+            "progress": max(0, min(100, progress)),
             "message": message,
             "current_section": current_section,
             "completed_sections": completed_sections or [],
@@ -2300,7 +2395,8 @@ class ReportManager:
             markdown_content=markdown_content,
             created_at=data.get('created_at', ''),
             completed_at=data.get('completed_at', ''),
-            error=data.get('error')
+            error=data.get('error'),
+            error_details=data.get('error_details')
         )
     
     @classmethod

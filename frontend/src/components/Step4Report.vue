@@ -112,9 +112,17 @@
         <!-- Failed state banner with retry -->
         <div v-if="isFailed" class="report-failed-banner">
           <span class="failed-icon">!</span>
-          <span class="failed-msg">Report generation failed.</span>
-          <button class="retry-btn" @click="retryReport" :disabled="isRetrying">
-            {{ isRetrying ? 'Restarting...' : 'Retry' }}
+          <div class="failed-copy">
+            <span class="failed-msg">{{ reportFailureMessage }}</span>
+            <span v-if="reportErrorType || reportErrorDetails?.message" class="failed-meta">
+              {{ reportErrorType || 'report_error' }}<template v-if="reportErrorDetails?.message"> · {{ reportErrorDetails.message }}</template>
+            </span>
+            <span v-if="reportErrorDetails?.stage || reportErrorDetails?.section_title" class="failed-meta">
+              <template v-if="reportErrorDetails?.stage">Stage: {{ reportErrorDetails.stage }}</template><template v-if="reportErrorDetails?.stage && reportErrorDetails?.section_title"> · </template><template v-if="reportErrorDetails?.section_title">Section: {{ reportErrorDetails.section_title }}</template>
+            </span>
+          </div>
+          <button class="retry-btn" @click="retryReport" :disabled="isRetrying || !isRetryable">
+            {{ isRetrying ? 'Restarting...' : (isRetryable ? 'Retry' : 'Retry Unavailable') }}
           </button>
         </div>
 
@@ -128,6 +136,10 @@
             <div class="metric">
               <span class="metric-label">Elapsed</span>
               <span class="metric-value mono">{{ formatElapsedTime }}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Progress</span>
+              <span class="metric-value mono">{{ progressPercent }}%</span>
             </div>
             <div class="metric">
               <span class="metric-label">Tools</span>
@@ -425,7 +437,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport } from '../api/report'
+import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport, getReportStatus } from '../api/report'
 
 const router = useRouter()
 
@@ -452,9 +464,13 @@ const handleDownloadPdf = async () => {
 
 // Retry failed report
 const retryReport = async () => {
-  if (!props.simulationId || isRetrying.value) return
+  if (!props.simulationId || isRetrying.value || !isRetryable.value) return
   isRetrying.value = true
   isFailed.value = false
+  reportStatus.value = null
+  reportErrorDetails.value = null
+  reportErrorType.value = null
+  isRetryable.value = true
   agentLogs.value = []
   consoleLogs.value = []
   agentLogLine.value = 0
@@ -464,8 +480,13 @@ const retryReport = async () => {
   try {
     const res = await generateReport({ simulation_id: props.simulationId, force_regenerate: true })
     if (res.success && res.data?.report_id) {
-      emit('add-log', `Report restarted: ${res.data.report_id}`)
-      startPolling()
+      const nextReportId = res.data.report_id
+      emit('add-log', `Report restarted: ${nextReportId}`)
+      if (nextReportId !== props.reportId) {
+        router.push({ name: 'Report', params: { reportId: nextReportId } })
+      } else {
+        startPolling()
+      }
     } else {
       isFailed.value = true
       emit('add-log', `Failed to restart: ${res.error || 'Unknown error'}`)
@@ -556,6 +577,10 @@ const markdownCopied = ref(false)
 const isFailed = ref(false)
 const isRetrying = ref(false)
 const isDownloading = ref(false)
+const reportStatus = ref(null)
+const reportErrorDetails = ref(null)
+const reportErrorType = ref(null)
+const isRetryable = ref(true)
 const startTime = ref(null)
 const leftPanel = ref(null)
 const rightPanel = ref(null)
@@ -1835,16 +1860,34 @@ const QuickSearchDisplay = {
 
 // Computed
 const statusClass = computed(() => {
+  if (isFailed.value) return 'error'
   if (isComplete.value) return 'completed'
-  if (agentLogs.value.length > 0) return 'processing'
+  if (reportStatus.value?.status === 'failed') return 'error'
+  if (agentLogs.value.length > 0 || reportStatus.value?.status === 'running') return 'processing'
   return 'pending'
 })
 
 const statusText = computed(() => {
+  if (isFailed.value) return 'Failed'
   if (isComplete.value) return 'Completed'
-  if (agentLogs.value.length > 0) return 'Generating...'
+  if (reportStatus.value?.status === 'failed') return 'Failed'
+  if (agentLogs.value.length > 0 || reportStatus.value?.status === 'running') return 'Generating...'
   return 'Waiting'
 })
+
+const reportFailureMessage = computed(() => {
+  return reportErrorDetails.value?.message || reportStatus.value?.message || 'Report generation failed.'
+})
+
+const hasMeaningfulFailureStatus = (status) => {
+  return status === 'failed' || status === 'error'
+}
+
+const detectConsoleFailure = (logs) => {
+  const joined = String(logs || '')
+  if (!joined) return false
+  return /(report(_| )?failed|报告生成失败|Traceback|Unhandled exception|ERROR)/i.test(joined)
+}
 
 const totalSections = computed(() => {
   return reportOutline.value?.sections?.length || 0
@@ -1855,8 +1898,11 @@ const completedSections = computed(() => {
 })
 
 const progressPercent = computed(() => {
-  if (totalSections.value === 0) return 0
-  return Math.round((completedSections.value / totalSections.value) * 100)
+  if (totalSections.value > 0) {
+    return Math.round((completedSections.value / totalSections.value) * 100)
+  }
+  const backendProgress = Number(reportStatus.value?.progress ?? 0)
+  return Number.isFinite(backendProgress) ? Math.max(0, Math.min(100, Math.round(backendProgress))) : 0
 })
 
 const totalToolCalls = computed(() => {
@@ -2148,6 +2194,38 @@ const getLogLevelClass = (log) => {
 // Polling
 let agentLogTimer = null
 let consoleLogTimer = null
+let reportStatusTimer = null
+
+const fetchReportStatus = async () => {
+  if (!props.reportId) return
+
+  try {
+    const res = await getReportStatus({ report_id: props.reportId })
+    if (!(res.success && res.data)) return
+
+    reportStatus.value = res.data
+    reportErrorDetails.value = res.data.error_details || null
+    reportErrorType.value = res.data.error_type || null
+    isRetryable.value = res.data.retryable !== false
+
+    if (res.data.status === 'completed' && !isComplete.value) {
+      isComplete.value = true
+      isFailed.value = false
+      currentSectionIndex.value = null
+      emit('update-status', 'completed')
+      stopPolling()
+      return
+    }
+
+    if (hasMeaningfulFailureStatus(res.data.status) && !isFailed.value && !isComplete.value) {
+      isFailed.value = true
+      emit('update-status', 'error')
+      stopPolling()
+    }
+  } catch (err) {
+    console.warn('Failed to fetch report status:', err)
+  }
+}
 
 const fetchAgentLog = async () => {
   if (!props.reportId) return
@@ -2182,6 +2260,8 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_complete') {
             isComplete.value = true
+            isFailed.value = false
+            reportStatus.value = { ...(reportStatus.value || {}), status: 'completed' }
             currentSectionIndex.value = null
             emit('update-status', 'completed')
             stopPolling()
@@ -2189,6 +2269,12 @@ const fetchAgentLog = async () => {
 
           if (log.action === 'error' || log.action === 'report_failed') {
             isFailed.value = true
+            reportStatus.value = { ...(reportStatus.value || {}), status: 'failed' }
+            if (log.details?.error_details) {
+              reportErrorDetails.value = log.details.error_details
+              reportErrorType.value = log.details.error_details.error_type || reportErrorType.value
+              isRetryable.value = log.details.error_details.retryable !== false
+            }
             emit('update-status', 'error')
             stopPolling()
           }
@@ -2277,8 +2363,9 @@ const fetchConsoleLog = async () => {
 
         // Detect failure from console log keywords
         const latestLogs = newLogs.join('\n')
-        if (!isFailed.value && !isComplete.value && (latestLogs.includes('ERROR') || latestLogs.includes('failed') || latestLogs.includes('报告生成失败'))) {
+        if (!isFailed.value && !isComplete.value && detectConsoleFailure(latestLogs)) {
           isFailed.value = true
+          reportStatus.value = { ...(reportStatus.value || {}), status: 'failed' }
           emit('update-status', 'error')
           stopPolling()
         }
@@ -2291,8 +2378,9 @@ const fetchConsoleLog = async () => {
       }
 
       // Also detect if status endpoint marks it failed
-      if (res.data?.status === 'failed' && !isFailed.value && !isComplete.value) {
+      if (hasMeaningfulFailureStatus(res.data?.status) && !isFailed.value && !isComplete.value) {
         isFailed.value = true
+        reportStatus.value = { ...(reportStatus.value || {}), status: 'failed' }
         emit('update-status', 'error')
         stopPolling()
       }
@@ -2303,11 +2391,13 @@ const fetchConsoleLog = async () => {
 }
 
 const startPolling = () => {
-  if (agentLogTimer || consoleLogTimer) return
+  if (agentLogTimer || consoleLogTimer || reportStatusTimer) return
   
+  fetchReportStatus()
   fetchAgentLog()
   fetchConsoleLog()
   
+  reportStatusTimer = setInterval(fetchReportStatus, 2000)
   agentLogTimer = setInterval(fetchAgentLog, 2000)
   consoleLogTimer = setInterval(fetchConsoleLog, 1500)
 }
@@ -2320,6 +2410,10 @@ const stopPolling = () => {
   if (consoleLogTimer) {
     clearInterval(consoleLogTimer)
     consoleLogTimer = null
+  }
+  if (reportStatusTimer) {
+    clearInterval(reportStatusTimer)
+    reportStatusTimer = null
   }
 }
 
@@ -2486,10 +2580,21 @@ watch(() => props.reportId, (newId) => {
   font-size: 1rem;
 }
 
-.failed-msg {
+.failed-copy {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.failed-msg {
   font-size: 0.82rem;
   color: #CC0000;
+}
+
+.failed-meta {
+  font-size: 0.72rem;
+  color: #991B1B;
 }
 
 .retry-btn {

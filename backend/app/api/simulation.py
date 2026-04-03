@@ -19,6 +19,60 @@ from ..models.project import ProjectManager
 logger = get_logger('mirofish.api.simulation')
 
 
+def _merge_simulation_runtime_fields(state, run_state=None):
+    """Merge persisted simulation lifecycle state with live/persisted runner state."""
+    result = state.to_dict()
+    run_state = run_state or SimulationRunner.get_run_state(state.simulation_id)
+
+    if not run_state:
+        result.setdefault("runner_status", "idle")
+        result.setdefault("total_rounds", 0)
+        result.setdefault("progress_percent", 0)
+        result.setdefault("simulated_hours", 0)
+        return result
+
+    result.update({
+        "runner_status": run_state.runner_status.value,
+        "current_round": run_state.current_round,
+        "total_rounds": run_state.total_rounds,
+        "progress_percent": round(run_state.current_round / max(run_state.total_rounds, 1) * 100, 1),
+        "simulated_hours": run_state.simulated_hours,
+        "total_simulation_hours": run_state.total_simulation_hours,
+        "twitter_current_round": run_state.twitter_current_round,
+        "reddit_current_round": run_state.reddit_current_round,
+        "twitter_simulated_hours": run_state.twitter_simulated_hours,
+        "reddit_simulated_hours": run_state.reddit_simulated_hours,
+        "twitter_running": run_state.twitter_running,
+        "reddit_running": run_state.reddit_running,
+        "twitter_completed": run_state.twitter_completed,
+        "reddit_completed": run_state.reddit_completed,
+        "twitter_actions_count": run_state.twitter_actions_count,
+        "reddit_actions_count": run_state.reddit_actions_count,
+        "total_actions_count": run_state.twitter_actions_count + run_state.reddit_actions_count,
+        "started_at": run_state.started_at,
+        "completed_at": run_state.completed_at,
+        "run_error": run_state.error,
+    })
+
+    status_map = {
+        RunnerStatus.RUNNING: SimulationStatus.RUNNING,
+        RunnerStatus.STARTING: SimulationStatus.RUNNING,
+        RunnerStatus.PAUSED: SimulationStatus.PAUSED,
+        RunnerStatus.STOPPING: SimulationStatus.PAUSED,
+        RunnerStatus.STOPPED: SimulationStatus.STOPPED,
+        RunnerStatus.COMPLETED: SimulationStatus.COMPLETED,
+        RunnerStatus.FAILED: SimulationStatus.FAILED,
+    }
+    merged_status = status_map.get(run_state.runner_status)
+    if merged_status:
+        result["status"] = merged_status.value
+
+    if run_state.error and not result.get("error"):
+        result["error"] = run_state.error
+
+    return result
+
+
 # Interview prompt 优化前缀
 # 添加此前缀可以避免Agent调用工具，直接用文本回复
 INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
@@ -764,10 +818,11 @@ def get_simulation(simulation_id: str):
                 "error": f"Simulation not found: {simulation_id}"
             }), 404
         
-        result = state.to_dict()
+        run_state = SimulationRunner.get_run_state(simulation_id)
+        result = _merge_simulation_runtime_fields(state, run_state)
         
         # 如果模拟已准备好，附加运行说明
-        if state.status == SimulationStatus.READY:
+        if result.get("status") == SimulationStatus.READY.value:
             result["run_instructions"] = manager.get_run_instructions(simulation_id)
         
         return jsonify({
@@ -916,7 +971,8 @@ def get_simulation_history():
         # 增强模拟数据，只从 Simulation 文件读取
         enriched_simulations = []
         for sim in simulations:
-            sim_dict = sim.to_dict()
+            run_state = SimulationRunner.get_run_state(sim.simulation_id)
+            sim_dict = _merge_simulation_runtime_fields(sim, run_state)
             
             # 获取模拟配置信息（从 simulation_config.json 读取 simulation_requirement）
             config = manager.get_simulation_config(sim.simulation_id)
@@ -935,16 +991,15 @@ def get_simulation_history():
                 recommended_rounds = 0
             
             # 获取运行状态（从 run_state.json 读取用户设置的实际轮数）
-            run_state = SimulationRunner.get_run_state(sim.simulation_id)
             if run_state:
-                sim_dict["current_round"] = run_state.current_round
-                sim_dict["runner_status"] = run_state.runner_status.value
                 # 使用用户设置的 total_rounds，若无则使用推荐轮数
                 sim_dict["total_rounds"] = run_state.total_rounds if run_state.total_rounds > 0 else recommended_rounds
+                sim_dict["progress_percent"] = round(run_state.current_round / max(sim_dict["total_rounds"], 1) * 100, 1)
             else:
                 sim_dict["current_round"] = 0
                 sim_dict["runner_status"] = "idle"
                 sim_dict["total_rounds"] = recommended_rounds
+                sim_dict["progress_percent"] = 0
             
             # 获取关联项目的文件列表（最多3个）
             project = ProjectManager.get_project(sim.project_id)
@@ -1686,7 +1741,7 @@ def stop_simulation():
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if state:
-            state.status = SimulationStatus.PAUSED
+            state.status = SimulationStatus.STOPPED
             manager._save_simulation_state(state)
         
         return jsonify({

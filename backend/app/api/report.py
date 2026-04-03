@@ -199,7 +199,7 @@ def generate_report():
         }), 500
 
 
-@report_bp.route('/generate/status', methods=['POST'])
+@report_bp.route('/generate/status', methods=['GET', 'POST'])
 def get_generate_status():
     """
     查询报告生成任务进度
@@ -222,47 +222,89 @@ def get_generate_status():
         }
     """
     try:
-        data = request.get_json() or {}
-        
-        task_id = data.get('task_id')
-        simulation_id = data.get('simulation_id')
-        
-        # 如果提供了simulation_id，先检查是否已有完成的报告
+        data = request.get_json(silent=True) or {}
+        task_id = data.get('task_id') or request.args.get('task_id')
+        simulation_id = data.get('simulation_id') or request.args.get('simulation_id')
+        report_id = data.get('report_id') or request.args.get('report_id')
+
+        def build_report_status_payload(report, progress=None):
+            progress = progress or {}
+            status = progress.get('status') or report.status.value
+            progress_value = progress.get('progress', 100 if report.status == ReportStatus.COMPLETED else 0)
+            payload = {
+                "report_id": report.report_id,
+                "simulation_id": report.simulation_id,
+                "status": status,
+                "progress": progress_value,
+                "message": progress.get('message') or report.error or ("报告已生成" if report.status == ReportStatus.COMPLETED else "报告处理中"),
+                "current_section": progress.get('current_section'),
+                "completed_sections": progress.get('completed_sections', []),
+                "error": report.error,
+                "error_details": report.error_details,
+                "retryable": (report.error_details or {}).get('retryable', False),
+                "error_type": (report.error_details or {}).get('error_type'),
+            }
+            return payload
+
+        if report_id:
+            report = ReportManager.get_report(report_id)
+            if not report:
+                return jsonify({
+                    "success": False,
+                    "error": f"报告不存在: {report_id}"
+                }), 404
+
+            progress = ReportManager.get_progress(report_id)
+            return jsonify({
+                "success": True,
+                "data": build_report_status_payload(report, progress)
+            })
+
         if simulation_id:
             existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
+            if existing_report:
+                progress = ReportManager.get_progress(existing_report.report_id)
+                payload = build_report_status_payload(existing_report, progress)
+                payload["already_completed"] = existing_report.status == ReportStatus.COMPLETED
                 return jsonify({
                     "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "report_id": existing_report.report_id,
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "报告已生成",
-                        "already_completed": True
-                    }
+                    "data": payload
                 })
-        
+
         if not task_id:
             return jsonify({
                 "success": False,
-                "error": "请提供 task_id 或 simulation_id"
+                "error": "请提供 task_id、report_id 或 simulation_id"
             }), 400
-        
+
         task_manager = TaskManager()
         task = task_manager.get_task(task_id)
-        
+
         if not task:
             return jsonify({
                 "success": False,
                 "error": f"任务不存在: {task_id}"
             }), 404
-        
+
+        task_data = task.to_dict()
+        task_data["retryable"] = task.status == TaskStatus.FAILED
+        task_data["error_type"] = None
+        report_id = (task.metadata or {}).get('report_id')
+        if report_id:
+            report = ReportManager.get_report(report_id)
+            if report:
+                task_data["report_id"] = report.report_id
+                task_data["simulation_id"] = report.simulation_id
+                task_data["error"] = report.error or task_data.get("error")
+                task_data["error_details"] = report.error_details
+                task_data["retryable"] = (report.error_details or {}).get('retryable', task_data["retryable"])
+                task_data["error_type"] = (report.error_details or {}).get('error_type')
+
         return jsonify({
             "success": True,
-            "data": task.to_dict()
+            "data": task_data
         })
-        
+
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
         return jsonify({
