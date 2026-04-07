@@ -37,7 +37,7 @@ const routes = [
     props: true
   },
   {
-    path: '/interaction/:reportId',
+    path: '/interaction/:reportId?',
     name: 'Interaction',
     component: InteractionView,
     props: true

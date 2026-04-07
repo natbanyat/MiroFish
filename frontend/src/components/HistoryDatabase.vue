@@ -203,6 +203,7 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getSimulationHistory, reopenEnv } from '../api/simulation'
+import { buildHistoryQuery } from '../workflow/history'
 
 const router = useRouter()
 const route = useRoute()
@@ -426,10 +427,10 @@ const closeModal = () => {
 }
 
 // Build shared history query params for stage navigation
-const buildHistQuery = () => ({
-  hist_project_id: selectedProject.value?.project_id || undefined,
-  hist_simulation_id: selectedProject.value?.simulation_id || undefined,
-  hist_report_id: selectedProject.value?.report_id || undefined,
+const buildHistQuery = (project = selectedProject.value) => buildHistoryQuery({
+  projectId: project?.project_id,
+  simulationId: project?.simulation_id,
+  reportId: project?.report_id,
 })
 
 // 导航到图谱构建页面（Project）
@@ -471,8 +472,11 @@ const goToReport = () => {
 // Resume interaction — reopen environment then navigate to Interaction view
 const resumeInteraction = async () => {
   if (!selectedProject.value?.simulation_id || isReopening.value) return
-  const simulationId = selectedProject.value.simulation_id
-  const reportId = selectedProject.value.report_id
+  const project = selectedProject.value
+  const simulationId = project.simulation_id
+  const reportId = project.report_id
+  const histQuery = buildHistQuery(project)
+
   isReopening.value = true
   try {
     await reopenEnv({ simulation_id: simulationId })
@@ -481,11 +485,12 @@ const resumeInteraction = async () => {
   } finally {
     isReopening.value = false
   }
+
   closeModal()
   router.push({
     name: 'Interaction',
     params: reportId ? { reportId } : {},
-    query: { ...buildHistQuery(), simulation_id: simulationId, reopen: '1' }
+    query: { ...histQuery, simulation_id: simulationId, reopen: '1' }
   })
 }
 

@@ -1,74 +1,44 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
-          </button>
-        </div>
-      </div>
+  <WorkflowShell
+    v-model="viewMode"
+    :current-step="4"
+    step-name="Report Generation"
+    :status-class="statusClass"
+    :status-text="statusText"
+  >
+    <template #left>
+      <GraphPanel 
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="4"
+        :isSimulating="false"
+        @refresh="refreshGraph"
+        @toggle-maximize="toggleMaximize('graph')"
+      />
+    </template>
 
-      <div class="header-right">
-        <div class="workflow-step">
-          <span class="step-num">Step 4/5</span>
-          <span class="step-name">Report Generation</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
-      </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="4"
-          :isSimulating="false"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step4 报告生成 -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <Step4Report
-          :reportId="currentReportId"
-          :simulationId="simulationId"
-          :systemLogs="systemLogs"
-          @add-log="addLog"
-          @update-status="updateStatus"
-        />
-      </div>
-    </main>
-  </div>
+    <template #right>
+      <Step4Report
+        :reportId="currentReportId"
+        :simulationId="simulationId"
+        :systemLogs="systemLogs"
+        @add-log="addLog"
+        @update-status="updateStatus"
+      />
+    </template>
+  </WorkflowShell>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step4Report from '../components/Step4Report.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
+import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const route = useRoute()
 const router = useRouter()
@@ -89,19 +59,6 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
-
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
 
 // --- Status Computed ---
 const statusClass = computed(() => {
@@ -125,6 +82,27 @@ const addLog = (msg) => {
 
 const updateStatus = (status) => {
   currentStatus.value = status
+}
+
+// Silently enrich URL with hist_* params so StageNav has full context
+// when this view is reached directly (e.g. from OperationsDashboard).
+const injectHistParams = () => {
+  const existing = getRouteWorkflowIds(route)
+  const projectId = projectData.value?.project_id || existing.projectId
+  const simId = simulationId.value || existing.simulationId
+  const repId = currentReportId.value || existing.reportId
+
+  if (
+    projectId === existing.projectId &&
+    simId === existing.simulationId &&
+    repId === existing.reportId
+  ) return
+
+  const newQuery = { ...route.query }
+  if (projectId) newQuery.hist_project_id = projectId
+  if (simId) newQuery.hist_simulation_id = simId
+  if (repId) newQuery.hist_report_id = repId
+  router.replace({ name: route.name, params: route.params, query: newQuery })
 }
 
 // --- Layout Methods ---
@@ -168,6 +146,7 @@ const loadReportData = async () => {
           }
         }
       }
+      injectHistParams()
     } else {
       addLog(`Failed to load report info: ${reportRes.error || 'Unknown error'}`)
     }
@@ -178,7 +157,7 @@ const loadReportData = async () => {
 
 const loadGraph = async (graphId) => {
   graphLoading.value = true
-  
+
   try {
     const res = await getGraphData(graphId)
     if (res.success) {
@@ -213,136 +192,4 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.main-view {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #FFF;
-  overflow: hidden;
-  font-family: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
-}
-
-/* Header */
-.app-header {
-  height: 60px;
-  border-bottom: 1px solid #EAEAEA;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  background: #FFF;
-  z-index: 100;
-  position: relative;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.brand {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: 1px;
-  cursor: pointer;
-}
-
-.view-switcher {
-  display: flex;
-  background: #F5F5F5;
-  padding: 4px;
-  border-radius: 6px;
-  gap: 4px;
-}
-
-.switch-btn {
-  border: none;
-  background: transparent;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.switch-btn.active {
-  background: #FFF;
-  color: #000;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.workflow-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-
-.step-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: #999;
-}
-
-.step-name {
-  font-weight: 700;
-  color: #000;
-}
-
-.step-divider {
-  width: 1px;
-  height: 14px;
-  background-color: #E0E0E0;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #666;
-  font-weight: 500;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #CCC;
-}
-
-.status-indicator.processing .dot { background: #FF9800; animation: pulse 1s infinite; }
-.status-indicator.completed .dot { background: #4CAF50; }
-.status-indicator.error .dot { background: #F44336; }
-
-@keyframes pulse { 50% { opacity: 0.5; } }
-
-/* Content */
-.content-area {
-  flex: 1;
-  display: flex;
-  position: relative;
-  overflow: hidden;
-}
-
-.panel-wrapper {
-  height: 100%;
-  overflow: hidden;
-  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease, transform 0.3s ease;
-  will-change: width, opacity, transform;
-}
-
-.panel-wrapper.left {
-  border-right: 1px solid #EAEAEA;
-}
 </style>

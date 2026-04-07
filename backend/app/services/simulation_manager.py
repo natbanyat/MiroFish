@@ -480,7 +480,9 @@ class SimulationManager:
                 if state:
                     if project_id is None or state.project_id == project_id:
                         simulations.append(state)
-        
+
+        # Sort by created_at descending (newest first)
+        simulations.sort(key=lambda s: s.created_at or "", reverse=True)
         return simulations
     
     def get_profiles(self, simulation_id: str, platform: str = "reddit") -> List[Dict[str, Any]]:

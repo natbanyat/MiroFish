@@ -287,7 +287,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { 
   startSimulation, 
   stopSimulation,
@@ -295,6 +295,7 @@ import {
   getRunStatusDetail
 } from '../api/simulation'
 import { generateReport } from '../api/report'
+import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const props = defineProps({
   simulationId: String,
@@ -310,7 +311,15 @@ const props = defineProps({
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
 
+const route = useRoute()
 const router = useRouter()
+
+const workflowIds = computed(() => getRouteWorkflowIds(route))
+const histQuery = computed(() => buildHistoryQuery({
+  projectId: props.projectData?.project_id || workflowIds.value.projectId,
+  simulationId: props.simulationId || workflowIds.value.simulationId,
+  reportId: workflowIds.value.reportId,
+}))
 
 // State
 const isGeneratingReport = ref(false)
@@ -721,7 +730,14 @@ const handleNextStep = async () => {
       addLog(`✓ Report generation started: ${reportId}`)
       
       // 跳转到报告页面
-      router.push({ name: 'Report', params: { reportId } })
+      router.push({
+        name: 'Report',
+        params: { reportId },
+        query: {
+          ...histQuery.value,
+          hist_report_id: reportId,
+        },
+      })
     } else {
       addLog(`✗ Failed to start report generation: ${res.error || 'Unknown error'}`)
       isGeneratingReport.value = false

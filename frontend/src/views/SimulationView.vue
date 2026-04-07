@@ -1,93 +1,59 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
-          </button>
-        </div>
-      </div>
+  <WorkflowShell
+    v-model="viewMode"
+    :current-step="2"
+    step-name="Environment Setup"
+    :status-class="statusClass"
+    :status-text="statusText"
+    right-panel-class="simulation-view-right"
+  >
+    <template #left>
+      <GraphPanel 
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="2"
+        @refresh="refreshGraph"
+        @toggle-maximize="toggleMaximize('graph')"
+      />
+    </template>
 
-      <div class="header-right">
-        <div class="workflow-step">
-          <span class="step-num">Step 2/5</span>
-          <span class="step-name">Environment Setup</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
-      </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="2"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step2 环境搭建 -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <!-- Resume banner: shown when a completed report already exists -->
-        <div v-if="existingReportId" class="resume-banner">
-          <div class="resume-banner-left">
-            <span class="resume-icon">◆</span>
-            <div>
-              <div class="resume-title">Report Already Generated</div>
-              <div class="resume-sub">A completed report exists for this simulation.</div>
-            </div>
+    <template #right>
+      <div v-if="existingReportId" class="resume-banner">
+        <div class="resume-banner-left">
+          <span class="resume-icon">◆</span>
+          <div>
+            <div class="resume-title">Report Already Generated</div>
+            <div class="resume-sub">A completed report exists for this simulation.</div>
           </div>
-          <button class="resume-view-btn" @click="router.push({ name: 'Report', params: { reportId: existingReportId } })">
-            View Report →
-          </button>
         </div>
-        <Step2EnvSetup
-          :simulationId="currentSimulationId"
-          :projectData="projectData"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @go-back="handleGoBack"
-          @next-step="handleNextStep"
-          @add-log="addLog"
-          @update-status="updateStatus"
-        />
+        <button class="resume-view-btn" @click="openExistingReport">
+          View Report →
+        </button>
       </div>
-    </main>
-
-    <!-- Stage navigation for history playback -->
-    <StageNav :currentStep="2" />
-  </div>
+      <Step2EnvSetup
+        :simulationId="currentSimulationId"
+        :projectData="projectData"
+        :graphData="graphData"
+        :systemLogs="systemLogs"
+        @go-back="handleGoBack"
+        @next-step="handleNextStep"
+        @add-log="addLog"
+        @update-status="updateStatus"
+      />
+    </template>
+  </WorkflowShell>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
-import StageNav from '../components/StageNav.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
 import { generateReport } from '../api/report'
+import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const route = useRoute()
 const router = useRouter()
@@ -109,18 +75,21 @@ const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
 const existingReportId = ref(null) // set if a completed report already exists
 
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
+const workflowIds = computed(() => getRouteWorkflowIds(route))
+const histQuery = computed(() => buildHistoryQuery({
+  projectId: projectData.value?.project_id || workflowIds.value.projectId,
+  simulationId: currentSimulationId.value || workflowIds.value.simulationId,
+  reportId: existingReportId.value || workflowIds.value.reportId,
+}))
 
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
+const openExistingReport = () => {
+  if (!existingReportId.value) return
+  router.push({
+    name: 'Report',
+    params: { reportId: existingReportId.value },
+    query: histQuery.value,
+  })
+}
 
 // --- Status Computed ---
 const statusClass = computed(() => {
@@ -158,7 +127,11 @@ const toggleMaximize = (target) => {
 const handleGoBack = () => {
   // 返回到 process 页面
   if (projectData.value?.project_id) {
-    router.push({ name: 'Process', params: { projectId: projectData.value.project_id } })
+    router.push({
+      name: 'Process',
+      params: { projectId: projectData.value.project_id },
+      query: histQuery.value,
+    })
   } else {
     router.push('/')
   }
@@ -177,12 +150,13 @@ const handleNextStep = (params = {}) => {
   // 构建路由参数
   const routeParams = {
     name: 'SimulationRun',
-    params: { simulationId: currentSimulationId.value }
+    params: { simulationId: currentSimulationId.value },
+    query: { ...histQuery.value }
   }
   
   // 如果有自定义轮数，通过 query 参数传递
   if (params.maxRounds) {
-    routeParams.query = { maxRounds: params.maxRounds }
+    routeParams.query.maxRounds = params.maxRounds
   }
   
   // 跳转到 Step 3 页面
@@ -457,7 +431,7 @@ onMounted(async () => {
   will-change: width, opacity, transform;
 }
 
-.panel-wrapper.right {
+.simulation-view-right {
   display: flex;
   flex-direction: column;
 }

@@ -1,85 +1,54 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
-          </button>
-        </div>
-      </div>
+  <WorkflowShell
+    v-model="viewMode"
+    :current-step="5"
+    step-name="Interaction"
+    :status-class="statusClass"
+    :status-text="statusText"
+  >
+    <template #left>
+      <GraphPanel 
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="5"
+        :isSimulating="false"
+        @refresh="refreshGraph"
+        @toggle-maximize="toggleMaximize('graph')"
+      />
+    </template>
 
-      <div class="header-right">
-        <div class="workflow-step">
-          <span class="step-num">Step 5/5</span>
-          <span class="step-name">Interaction</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
+    <template #right>
+      <div v-if="simulationId && !envAlive && !envChecking" class="env-banner">
+        <span class="env-banner-text">Environment closed — all simulation data is saved.</span>
+        <button
+          class="env-reopen-btn"
+          :disabled="envReopening"
+          @click="reopenEnvironment"
+        >
+          {{ envReopening ? 'Reopening...' : 'Reopen for Interactions' }}
+        </button>
       </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="5"
-          :isSimulating="false"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step5 深度互动 -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <!-- Environment status banner (shown when env is closed) -->
-        <div v-if="simulationId && !envAlive && !envChecking" class="env-banner">
-          <span class="env-banner-text">Environment closed — all simulation data is saved.</span>
-          <button
-            class="env-reopen-btn"
-            :disabled="envReopening"
-            @click="reopenEnvironment"
-          >
-            {{ envReopening ? 'Reopening...' : 'Reopen for Interactions' }}
-          </button>
-        </div>
-        <Step5Interaction
-          :reportId="currentReportId"
-          :simulationId="simulationId"
-          :systemLogs="systemLogs"
-          @add-log="addLog"
-          @update-status="updateStatus"
-        />
-      </div>
-    </main>
-  </div>
+      <Step5Interaction
+        :reportId="currentReportId"
+        :simulationId="simulationId"
+        :systemLogs="systemLogs"
+        @add-log="addLog"
+        @update-status="updateStatus"
+      />
+    </template>
+  </WorkflowShell>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getEnvStatus, reopenEnv } from '../api/simulation'
 import { getReport } from '../api/report'
+import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const route = useRoute()
 const router = useRouter()
@@ -106,19 +75,6 @@ const envAlive = ref(true) // optimistic until first check
 const envChecking = ref(false)
 const envReopening = ref(false)
 
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
 // --- Status Computed ---
 const statusClass = computed(() => {
   return currentStatus.value
@@ -144,6 +100,27 @@ const updateStatus = (status) => {
   currentStatus.value = status
 }
 
+// Silently enrich URL with hist_* params so StageNav has full context
+// when this view is reached directly (e.g. from OperationsDashboard).
+const injectHistParams = () => {
+  const existing = getRouteWorkflowIds(route)
+  const projectId = projectData.value?.project_id || existing.projectId
+  const simId = simulationId.value || existing.simulationId
+  const repId = currentReportId.value || existing.reportId
+
+  if (
+    projectId === existing.projectId &&
+    simId === existing.simulationId &&
+    repId === existing.reportId
+  ) return
+
+  const newQuery = { ...route.query }
+  if (projectId) newQuery.hist_project_id = projectId
+  if (simId) newQuery.hist_simulation_id = simId
+  if (repId) newQuery.hist_report_id = repId
+  router.replace({ name: route.name, params: route.params, query: newQuery })
+}
+
 // --- Layout Methods ---
 const toggleMaximize = (target) => {
   if (viewMode.value === target) {
@@ -153,30 +130,63 @@ const toggleMaximize = (target) => {
   }
 }
 
+// Load simulation and project data given a simulation_id (used when no reportId)
+const loadFromSimulation = async (simId) => {
+  try {
+    const simRes = await getSimulation(simId)
+    if (simRes.success && simRes.data) {
+      const simData = simRes.data
+      if (simData.project_id) {
+        const projRes = await getProject(simData.project_id)
+        if (projRes.success && projRes.data) {
+          projectData.value = projRes.data
+          addLog(`Project loaded: ${projRes.data.project_id}`)
+          if (projRes.data.graph_id) {
+            await loadGraph(projRes.data.graph_id)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    addLog(`Load from simulation error: ${err.message}`)
+  }
+}
+
 // --- Data Logic ---
 const loadReportData = async () => {
+  // If no reportId, fall back to loading from simulation_id directly
+  if (!currentReportId.value) {
+    if (simulationId.value) {
+      addLog(`No reportId, loading from simulation_id: ${simulationId.value}`)
+      await loadFromSimulation(simulationId.value)
+      injectHistParams()
+      checkEnvStatus()
+    }
+    return
+  }
+
   try {
     addLog(`Loading report data: ${currentReportId.value}`)
-    
+
     // 获取 report 信息以获取 simulation_id
     const reportRes = await getReport(currentReportId.value)
     if (reportRes.success && reportRes.data) {
       const reportData = reportRes.data
       simulationId.value = reportData.simulation_id
-      
+
       if (simulationId.value) {
         // 获取 simulation 信息
         const simRes = await getSimulation(simulationId.value)
         if (simRes.success && simRes.data) {
           const simData = simRes.data
-          
+
           // 获取 project 信息
           if (simData.project_id) {
             const projRes = await getProject(simData.project_id)
             if (projRes.success && projRes.data) {
               projectData.value = projRes.data
               addLog(`Project loaded: ${projRes.data.project_id}`)
-              
+
               // 获取 graph 数据
               if (projRes.data.graph_id) {
                 await loadGraph(projRes.data.graph_id)
@@ -185,6 +195,7 @@ const loadReportData = async () => {
           }
         }
       }
+      injectHistParams()
     } else {
       addLog(`Failed to load report info: ${reportRes.error || 'Unknown error'}`)
     }

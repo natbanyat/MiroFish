@@ -1,89 +1,55 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: 'Graph', split: 'Split', workbench: 'Workbench' }[mode] }}
-          </button>
-        </div>
+  <WorkflowShell
+    v-model="viewMode"
+    :current-step="currentStep"
+    :step-name="stepNames[currentStep - 1]"
+    :status-class="statusClass"
+    :status-text="statusText"
+  >
+    <template #left>
+      <GraphPanel 
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="currentPhase"
+        @refresh="refreshGraph"
+        @toggle-maximize="toggleMaximize('graph')"
+      />
+    </template>
+
+    <template #right>
+      <div v-if="error" class="error-banner">
+        <div class="error-text">{{ error }}</div>
+        <button class="retry-btn" @click="retryLastAction" :disabled="loading">Retry</button>
+        <button class="dismiss-btn" @click="error = ''">&times;</button>
       </div>
 
-      <div class="header-right">
-        <div class="workflow-step">
-          <span class="step-num">Step {{ currentStep }}/5</span>
-          <span class="step-name">{{ stepNames[currentStep - 1] }}</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
-      </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="currentPhase"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step Components -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <!-- Error Banner with Retry -->
-        <div v-if="error" class="error-banner">
-          <div class="error-text">{{ error }}</div>
-          <button class="retry-btn" @click="retryLastAction" :disabled="loading">Retry</button>
-          <button class="dismiss-btn" @click="error = ''">&times;</button>
-        </div>
-
-        <!-- Step 1: 图谱构建 -->
-        <Step1GraphBuild
-          v-if="currentStep === 1"
-          :currentPhase="currentPhase"
-          :projectData="projectData"
-          :ontologyProgress="ontologyProgress"
-          :buildProgress="buildProgress"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @next-step="handleNextStep"
-        />
-        <!-- Step 2: 环境搭建 -->
-        <Step2EnvSetup
-          v-else-if="currentStep === 2"
-          :projectData="projectData"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @go-back="handleGoBack"
-          @next-step="handleNextStep"
-          @add-log="addLog"
-        />
-      </div>
-    </main>
-  </div>
+      <Step1GraphBuild
+        v-if="currentStep === 1"
+        :currentPhase="currentPhase"
+        :projectData="projectData"
+        :ontologyProgress="ontologyProgress"
+        :buildProgress="buildProgress"
+        :graphData="graphData"
+        :systemLogs="systemLogs"
+        @next-step="handleNextStep"
+      />
+      <Step2EnvSetup
+        v-else-if="currentStep === 2"
+        :projectData="projectData"
+        :graphData="graphData"
+        :systemLogs="systemLogs"
+        @go-back="handleGoBack"
+        @next-step="handleNextStep"
+        @add-log="addLog"
+      />
+    </template>
+  </WorkflowShell>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
@@ -115,19 +81,6 @@ const systemLogs = ref([])
 // Polling timers
 let pollTimer = null
 let graphPollTimer = null
-
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
 
 // --- Status Computed ---
 const statusClass = computed(() => {

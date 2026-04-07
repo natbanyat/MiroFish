@@ -279,6 +279,8 @@
         </div>
       </section>
 
+      <OperationsDashboard />
+
       <!-- 历史项目数据库 -->
       <HistoryDatabase />
     </div>
@@ -289,6 +291,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
+import OperationsDashboard from '../components/OperationsDashboard.vue'
 import CostTierToggle from '../components/CostTierToggle.vue'
 import ScenarioCreator from '../components/ScenarioCreator.vue'
 import ModelRouter from '../components/ModelRouter.vue'

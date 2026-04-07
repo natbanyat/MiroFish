@@ -436,9 +436,11 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport, getReportStatus } from '../api/report'
+import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
+const route = useRoute()
 const router = useRouter()
 
 const props = defineProps({
@@ -448,6 +450,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add-log', 'update-status'])
+
+const workflowIds = computed(() => getRouteWorkflowIds(route))
+const histQuery = computed(() => buildHistoryQuery({
+  projectId: workflowIds.value.projectId,
+  simulationId: props.simulationId || workflowIds.value.simulationId,
+  reportId: props.reportId || workflowIds.value.reportId,
+}))
 
 // PDF Download
 const handleDownloadPdf = async () => {
@@ -483,7 +492,14 @@ const retryReport = async () => {
       const nextReportId = res.data.report_id
       emit('add-log', `Report restarted: ${nextReportId}`)
       if (nextReportId !== props.reportId) {
-        router.push({ name: 'Report', params: { reportId: nextReportId } })
+        router.push({
+          name: 'Report',
+          params: { reportId: nextReportId },
+          query: {
+            ...histQuery.value,
+            hist_report_id: nextReportId,
+          },
+        })
       } else {
         startPolling()
       }
@@ -502,7 +518,11 @@ const retryReport = async () => {
 // Navigation
 const goToInteraction = () => {
   if (props.reportId) {
-    router.push({ name: 'Interaction', params: { reportId: props.reportId } })
+    router.push({
+      name: 'Interaction',
+      params: { reportId: props.reportId },
+      query: histQuery.value,
+    })
   }
 }
 
