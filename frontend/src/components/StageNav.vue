@@ -39,6 +39,7 @@ const visible = computed(() => !!simulationId.value)
 const stages = computed(() => [
   { step: 1, icon: '\u25C7', label: 'Graph', enabled: !!projectId.value },
   { step: 2, icon: '\u25C8', label: 'Env Setup', enabled: !!simulationId.value },
+  { step: 3, icon: '\u25BA', label: 'Run', enabled: !!simulationId.value },
   { step: 4, icon: '\u25C6', label: 'Report', enabled: !!reportId.value },
   { step: 5, icon: '\u25C9', label: 'Interact', enabled: !!simulationId.value },
 ])
@@ -55,6 +56,9 @@ const navigate = async (stage) => {
       break
     case 2:
       router.push({ name: 'Simulation', params: { simulationId: simulationId.value }, query: histQuery.value })
+      break
+    case 3:
+      router.push({ name: 'SimulationRun', params: { simulationId: simulationId.value }, query: histQuery.value })
       break
     case 4:
       router.push({ name: 'Report', params: { reportId: reportId.value }, query: histQuery.value })
