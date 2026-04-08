@@ -82,6 +82,27 @@ const histQuery = computed(() => buildHistoryQuery({
   reportId: existingReportId.value || workflowIds.value.reportId,
 }))
 
+// Silently enrich URL with hist_* params so StageNav has full context
+// when this view is reached directly (e.g. from OperationsDashboard).
+const injectHistParams = () => {
+  const existing = getRouteWorkflowIds(route)
+  const projectId = projectData.value?.project_id || existing.projectId
+  const simId = currentSimulationId.value || existing.simulationId
+  const repId = existingReportId.value || existing.reportId
+
+  if (
+    projectId === existing.projectId &&
+    simId === existing.simulationId &&
+    repId === existing.reportId
+  ) return
+
+  const newQuery = { ...route.query }
+  if (projectId) newQuery.hist_project_id = projectId
+  if (simId) newQuery.hist_simulation_id = simId
+  if (repId) newQuery.hist_report_id = repId
+  router.replace({ name: route.name, params: route.params, query: newQuery })
+}
+
 const openExistingReport = () => {
   if (!existingReportId.value) return
   router.push({
@@ -261,6 +282,8 @@ const loadSimulationData = async () => {
           }
         }
       }
+
+      injectHistParams()
     } else {
       addLog(`Failed to load simulation data: ${simRes.error || 'Unknown error'}`)
     }

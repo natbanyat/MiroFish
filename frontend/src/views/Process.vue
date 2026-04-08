@@ -496,7 +496,11 @@ const goToNextStep = async () => {
   try {
     const response = await createSimulation({ project_id: currentProjectId.value })
     const simulationId = response.data.simulation_id
-    router.push({ name: 'Simulation', params: { simulationId } })
+    router.push({
+      name: 'Simulation',
+      params: { simulationId },
+      query: { hist_project_id: currentProjectId.value },
+    })
   } catch (err) {
     createSimulationError.value = err?.response?.data?.detail || err.message || 'Failed to create simulation'
     console.error('goToNextStep error:', err)

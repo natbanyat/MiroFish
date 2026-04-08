@@ -5,7 +5,6 @@
     step-name="Run Simulation"
     :status-class="statusClass"
     :status-text="statusText"
-    :show-stage-nav="false"
   >
     <template #left>
       <GraphPanel 
@@ -199,6 +198,27 @@ const handleNextStep = () => {
   addLog('Entering Step 4: Report Generation')
 }
 
+// Silently enrich URL with hist_* params so StageNav has full context
+// when this view is reached directly (e.g. from OperationsDashboard).
+const injectHistParams = () => {
+  const existing = getRouteWorkflowIds(route)
+  const projectId = projectData.value?.project_id || existing.projectId
+  const simId = currentSimulationId.value || existing.simulationId
+  const repId = existing.reportId
+
+  if (
+    projectId === existing.projectId &&
+    simId === existing.simulationId &&
+    repId === existing.reportId
+  ) return
+
+  const newQuery = { ...route.query }
+  if (projectId) newQuery.hist_project_id = projectId
+  if (simId) newQuery.hist_simulation_id = simId
+  if (repId) newQuery.hist_report_id = repId
+  router.replace({ name: route.name, params: route.params, query: newQuery })
+}
+
 // --- Data Logic ---
 const loadSimulationData = async () => {
   try {
@@ -234,13 +254,15 @@ const loadSimulationData = async () => {
         if (projRes.success && projRes.data) {
           projectData.value = projRes.data
           addLog(`Project loaded: ${projRes.data.project_id}`)
-          
+
           // 获取 graph 数据
           if (projRes.data.graph_id) {
             await loadGraph(projRes.data.graph_id)
           }
         }
       }
+
+      injectHistParams()
     } else {
       addLog(`Failed to load simulation data: ${simRes.error || 'Unknown error'}`)
     }
