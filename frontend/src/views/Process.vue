@@ -374,10 +374,11 @@
 
           <!-- 下一步按钮 -->
           <div class="next-step-section" v-if="currentPhase >= 2">
-            <button class="next-step-btn" @click="goToNextStep" :disabled="currentPhase < 2">
-              Proceed to Environment Setup
-              <span class="btn-arrow">→</span>
+            <button class="next-step-btn" @click="goToNextStep" :disabled="currentPhase < 2 || isCreatingSimulation">
+              <span v-if="isCreatingSimulation">Creating simulation…</span>
+              <span v-else>Proceed to Environment Setup <span class="btn-arrow">→</span></span>
             </button>
+            <div v-if="createSimulationError" class="next-step-error">{{ createSimulationError }}</div>
           </div>
         </div>
 
@@ -415,6 +416,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
+import { createSimulation } from '../api/simulation'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 import * as d3 from 'd3'
 
@@ -484,9 +486,23 @@ const goHome = () => {
   router.push('/')
 }
 
-const goToNextStep = () => {
-  // TODO: proceed to environment setup step
-  alert('Environment Setup feature is under development...')
+const isCreatingSimulation = ref(false)
+const createSimulationError = ref(null)
+
+const goToNextStep = async () => {
+  if (isCreatingSimulation.value) return
+  isCreatingSimulation.value = true
+  createSimulationError.value = null
+  try {
+    const response = await createSimulation({ project_id: currentProjectId.value })
+    const simulationId = response.data.simulation_id
+    router.push({ name: 'Simulation', params: { simulationId } })
+  } catch (err) {
+    createSimulationError.value = err?.response?.data?.detail || err.message || 'Failed to create simulation'
+    console.error('goToNextStep error:', err)
+  } finally {
+    isCreatingSimulation.value = false
+  }
 }
 
 const toggleFullScreen = () => {
@@ -1985,6 +2001,12 @@ onUnmounted(() => {
 
 .btn-arrow {
   font-size: 1.2rem;
+}
+
+.next-step-error {
+  margin-top: 8px;
+  color: #dc3545;
+  font-size: 13px;
 }
 
 /* 项目信息面板 */
