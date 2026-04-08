@@ -489,6 +489,48 @@ const doStartSimulation = async () => {
   }
 }
 
+// Check run state before deciding to start/resume/display existing data.
+// Called on mount so navigating back via StageNav doesn't wipe a completed run.
+const checkAndResumeOrStart = async () => {
+  if (!props.simulationId) return
+
+  addLog('Checking simulation state...')
+
+  try {
+    const res = await getRunStatus(props.simulationId)
+
+    if (res.success && res.data) {
+      const data = res.data
+      const runnerStatus = data.runner_status || 'idle'
+
+      if (runnerStatus === 'completed' || runnerStatus === 'stopped') {
+        addLog(`Simulation already ${runnerStatus}. Loading existing run data...`)
+        phase.value = 2
+        runStatus.value = data
+        emitStatusUpdate('completed')
+        // Load full action history once without starting polling loop
+        await fetchRunStatusDetail()
+        return
+      }
+
+      if (runnerStatus === 'running' || runnerStatus === 'starting') {
+        addLog('Simulation is running. Resuming monitoring...')
+        phase.value = 1
+        runStatus.value = data
+        emitStatusUpdate()
+        startStatusPolling()
+        startDetailPolling()
+        return
+      }
+    }
+  } catch (err) {
+    addLog(`State check failed: ${err.message}. Proceeding to start...`)
+  }
+
+  // Default: idle / failed / no state — start fresh
+  await doStartSimulation()
+}
+
 // 停止模拟
 const handleStopSimulation = async () => {
   if (!props.simulationId) return
@@ -761,7 +803,7 @@ watch(() => props.systemLogs?.length, () => {
 onMounted(() => {
   addLog('Step 3 simulation initialized')
   if (props.simulationId) {
-    doStartSimulation()
+    checkAndResumeOrStart()
   }
 })
 
