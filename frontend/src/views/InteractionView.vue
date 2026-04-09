@@ -159,13 +159,14 @@ const loadFromSimulation = async (simId) => {
 
 // --- Data Logic ---
 const loadReportData = async () => {
-  // If no reportId, fall back to loading from simulation_id directly
+  // If no reportId, fall back to loading from simulation_id directly.
+  // Env status (single probe or poll-until-alive) is handled by watch(simulationId);
+  // calling checkEnvStatus() here would race against pollEnvUntilAlive when reopen=1.
   if (!currentReportId.value) {
     if (simulationId.value) {
       addLog(`No reportId, loading from simulation_id: ${simulationId.value}`)
       await loadFromSimulation(simulationId.value)
       injectHistParams()
-      checkEnvStatus()
     }
     return
   }
