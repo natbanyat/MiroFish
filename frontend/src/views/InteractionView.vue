@@ -231,7 +231,7 @@ const refreshGraph = () => {
   }
 }
 
-// Check environment alive status
+// Check environment alive status (single probe)
 const checkEnvStatus = async () => {
   if (!simulationId.value) return
   envChecking.value = true
@@ -239,6 +239,33 @@ const checkEnvStatus = async () => {
     const res = await getEnvStatus({ simulation_id: simulationId.value })
     envAlive.value = res.data?.env_alive ?? false
   } catch {
+    envAlive.value = false
+  } finally {
+    envChecking.value = false
+  }
+}
+
+// Poll env status until alive — used when a reopen was just triggered by the caller
+// (e.g. StageNav or HistoryDatabase passed reopen=1 after calling reopenEnv).
+// Keeps envChecking=true so the banner stays hidden while we wait.
+const pollEnvUntilAlive = async (simId) => {
+  if (!simId) return
+  envChecking.value = true
+  addLog('Waiting for environment to come online...')
+  try {
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000))
+      try {
+        const res = await getEnvStatus({ simulation_id: simId })
+        if (res.data?.env_alive) {
+          envAlive.value = true
+          addLog('Environment is ready for interactions')
+          return
+        }
+      } catch { /* keep polling */ }
+    }
+    // Timed out — fall through and show banner
+    addLog('Environment startup timed out.')
     envAlive.value = false
   } finally {
     envChecking.value = false
@@ -282,9 +309,17 @@ watch(() => route.params.reportId, (newId) => {
   }
 }, { immediate: true })
 
-// Also accept simulation_id directly from query params (e.g. from History Resume)
+// Also accept simulation_id directly from query params (e.g. from History Resume).
+// When reopen=1 is present the caller already triggered reopenEnv; poll until alive
+// rather than probing once (which would show a false "env closed" banner mid-startup).
 watch(simulationId, (id) => {
-  if (id) checkEnvStatus()
+  if (id) {
+    if (route.query.reopen === '1') {
+      pollEnvUntilAlive(id)
+    } else {
+      checkEnvStatus()
+    }
+  }
 })
 
 onMounted(() => {
