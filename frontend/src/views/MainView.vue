@@ -1,13 +1,13 @@
 <template>
   <WorkflowShell
     v-model="viewMode"
-    :current-step="currentStep"
-    :step-name="stepNames[currentStep - 1]"
+    :current-step="1"
+    step-name="Graph Build"
     :status-class="statusClass"
     :status-text="statusText"
   >
     <template #left>
-      <GraphPanel 
+      <GraphPanel
         :graphData="graphData"
         :loading="graphLoading"
         :currentPhase="currentPhase"
@@ -24,35 +24,23 @@
       </div>
 
       <Step1GraphBuild
-        v-if="currentStep === 1"
         :currentPhase="currentPhase"
         :projectData="projectData"
         :ontologyProgress="ontologyProgress"
         :buildProgress="buildProgress"
         :graphData="graphData"
         :systemLogs="systemLogs"
-        @next-step="handleNextStep"
-      />
-      <Step2EnvSetup
-        v-else-if="currentStep === 2"
-        :projectData="projectData"
-        :graphData="graphData"
-        :systemLogs="systemLogs"
-        @go-back="handleGoBack"
-        @next-step="handleNextStep"
-        @add-log="addLog"
       />
     </template>
   </WorkflowShell>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
-import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 
@@ -61,10 +49,6 @@ const router = useRouter()
 
 // Layout State
 const viewMode = ref('split') // graph | split | workbench
-
-// Step State
-const currentStep = ref(1) // 1: 图谱构建, 2: 环境搭建, 3: 开始模拟, 4: 报告生成, 5: 深度互动
-const stepNames = ['Graph Build', 'Env Setup', 'Run Simulation', 'Report', 'Interaction']
 
 // Data State
 const currentProjectId = ref(route.params.projectId)
@@ -113,24 +97,6 @@ const toggleMaximize = (target) => {
     viewMode.value = 'split'
   } else {
     viewMode.value = target
-  }
-}
-
-const handleNextStep = (params = {}) => {
-  if (currentStep.value < 5) {
-    currentStep.value++
-    addLog(`Entering Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
-
-    if (currentStep.value === 3 && params.maxRounds) {
-      addLog(`Custom simulation rounds: ${params.maxRounds}`)
-    }
-  }
-}
-
-const handleGoBack = () => {
-  if (currentStep.value > 1) {
-    currentStep.value--
-    addLog(`Returned to Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
   }
 }
 

@@ -20,13 +20,18 @@
     <template #right>
       <div v-if="simulationId && !envAlive && !envChecking" class="env-banner">
         <span class="env-banner-text">Environment closed — all simulation data is saved.</span>
-        <button
-          class="env-reopen-btn"
-          :disabled="envReopening"
-          @click="reopenEnvironment"
-        >
-          {{ envReopening ? 'Reopening...' : 'Reopen for Interactions' }}
-        </button>
+        <div class="env-banner-actions">
+          <button
+            class="env-reopen-btn"
+            :disabled="envReopening"
+            @click="reopenEnvironment"
+          >
+            {{ envReopening ? 'Reopening...' : 'Reopen for Interactions' }}
+          </button>
+          <button class="env-home-btn" @click="router.push('/')">
+            New Simulation
+          </button>
+        </div>
       </div>
       <Step5Interaction
         :reportId="currentReportId"
@@ -464,5 +469,30 @@ onMounted(() => {
 .env-reopen-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.env-banner-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.env-home-btn {
+  padding: 5px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #92400E;
+  background: transparent;
+  border: 1px solid #92400E;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.env-home-btn:hover {
+  background: #92400E;
+  color: #FFFFFF;
 }
 </style>

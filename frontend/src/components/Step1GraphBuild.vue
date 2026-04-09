@@ -202,8 +202,6 @@ const props = defineProps({
   systemLogs: { type: Array, default: () => [] }
 })
 
-defineEmits(['next-step'])
-
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
 const creatingSimulation = ref(false)
@@ -226,10 +224,13 @@ const handleEnterEnvSetup = async () => {
     })
     
     if (res.success && res.data?.simulation_id) {
-      // 跳转到 simulation 页面
       router.push({
         name: 'Simulation',
-        params: { simulationId: res.data.simulation_id }
+        params: { simulationId: res.data.simulation_id },
+        query: {
+          hist_project_id: props.projectData.project_id,
+          hist_simulation_id: res.data.simulation_id,
+        }
       })
     } else {
       console.error('Failed to create simulation:', res.error)
