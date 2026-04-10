@@ -243,11 +243,11 @@
               <span class="artifact-action-step">Step 1</span>
               <span>Graph Build</span>
             </button>
-            <button class="artifact-action" @click="openEnvironmentSetup">
+            <button class="artifact-action" :disabled="!selectedSimulation.simulation_id" @click="openEnvironmentSetup">
               <span class="artifact-action-step">Step 2</span>
               <span>Environment Setup</span>
             </button>
-            <button class="artifact-action" :disabled="!selectedSimulation.project_id" @click="openSimulationRun">
+            <button class="artifact-action" :disabled="!selectedSimulation.simulation_id" @click="openSimulationRun">
               <span class="artifact-action-step">Step 3</span>
               <span>Run Simulation</span>
             </button>
