@@ -325,9 +325,16 @@ watch(simulationId, (id) => {
 
 onMounted(() => {
   addLog('InteractionView initialized')
-  // Support direct simulation_id from query (History Resume flow)
-  if (route.query.simulation_id && !simulationId.value) {
-    simulationId.value = route.query.simulation_id
+  // Seed simulationId early from any available query source so the env-status
+  // watch fires immediately — without waiting for the full loadReportData()
+  // async chain (getReport → getSimulation → getProject).
+  //
+  // Sources, in priority order:
+  //   1. simulation_id  — explicit param set by StageNav / HistoryDatabase (also carries reopen=1)
+  //   2. hist_simulation_id — standard hist param set by Step 4 goToInteraction via histQuery
+  const earlySimId = route.query.simulation_id || getRouteWorkflowIds(route).simulationId
+  if (earlySimId && !simulationId.value) {
+    simulationId.value = earlySimId
   }
   loadReportData()
 })
