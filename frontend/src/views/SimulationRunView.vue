@@ -42,6 +42,7 @@ import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus } from '../api/simulation'
+import { generateReport } from '../api/report'
 import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const route = useRoute()
@@ -59,6 +60,7 @@ const viewMode = ref('split')
 const currentSimulationId = ref(route.params.simulationId)
 // 直接在初始化时从 query 参数获取 maxRounds，确保子组件能立即获取到值
 const maxRounds = ref(route.query.maxRounds ? parseInt(route.query.maxRounds) : null)
+const existingReportId = ref(null)
 const minutesPerRound = ref(30) // 默认每轮30分钟
 const projectData = ref(null)
 const graphData = ref(null)
@@ -76,7 +78,7 @@ const workflowIds = computed(() => getRouteWorkflowIds(route))
 const histQuery = computed(() => buildHistoryQuery({
   projectId: projectData.value?.project_id || workflowIds.value.projectId,
   simulationId: currentSimulationId.value || workflowIds.value.simulationId,
-  reportId: workflowIds.value.reportId,
+  reportId: existingReportId.value || workflowIds.value.reportId,
 }))
 
 // --- Status Computed ---
@@ -204,7 +206,7 @@ const injectHistParams = () => {
   const existing = getRouteWorkflowIds(route)
   const projectId = projectData.value?.project_id || existing.projectId
   const simId = currentSimulationId.value || existing.simulationId
-  const repId = existing.reportId
+  const repId = existingReportId.value || existing.reportId
 
   if (
     projectId === existing.projectId &&
@@ -236,7 +238,21 @@ const loadSimulationData = async () => {
         currentRound: simData.current_round || 0,
         totalRounds: simData.total_rounds || maxRounds.value || 0
       })
-      
+
+      // If simulation is already completed, probe for an existing report so that
+      // hist_report_id is injected into the URL and StageNav Step 4 becomes enabled.
+      if (simData.status === 'completed' || ['completed', 'stopped'].includes(simData.runner_status)) {
+        try {
+          const reportCheck = await generateReport({ simulation_id: currentSimulationId.value, force_regenerate: false })
+          if (reportCheck.success && reportCheck.data?.already_generated && reportCheck.data?.report_id) {
+            existingReportId.value = reportCheck.data.report_id
+            addLog(`Existing report found: ${reportCheck.data.report_id}`)
+          }
+        } catch (e) {
+          // Non-blocking — ignore if report check fails
+        }
+      }
+
       // 获取 simulation config 以获取 minutes_per_round
       try {
         const configRes = await getSimulationConfig(currentSimulationId.value)
