@@ -302,17 +302,41 @@ const reopenEnvironment = async () => {
   }
 }
 
-// Watch route params
-watch(() => route.params.reportId, (newId) => {
-  if (newId && newId !== currentReportId.value) {
-    currentReportId.value = newId
-    loadReportData()
-  }
-}, { immediate: true })
+// Watch both the route param and simulation_id query so the view re-syncs when the
+// component is reused for a different report/simulation via in-app navigation.
+// On initial mount (old === undefined) the guard is skipped so the load always runs.
+watch(
+  () => [route.params.reportId, route.query.simulation_id],
+  ([newReportId, newSimId], old) => {
+    if (old !== undefined) {
+      const [oldReportId, oldSimId] = old
+      if (newReportId === oldReportId && newSimId === oldSimId) return
+    }
 
-// Also accept simulation_id directly from query params (e.g. from History Resume).
-// When reopen=1 is present the caller already triggered reopenEnv; poll until alive
-// rather than probing once (which would show a false "env closed" banner mid-startup).
+    // Sync route context and reset stale env state for the new session
+    currentReportId.value = newReportId || null
+    envAlive.value = true
+    envChecking.value = false
+    envReopening.value = false
+    simulationId.value = null
+    projectData.value = null
+    graphData.value = null
+
+    // Seed simulationId early so watch(simulationId) fires for env check/poll
+    // before the full loadReportData() async chain completes.
+    // Sources: simulation_id query param (also carries reopen=1), then hist_simulation_id.
+    const earlySimId = newSimId || getRouteWorkflowIds(route).simulationId
+    if (earlySimId) {
+      simulationId.value = earlySimId
+    }
+    loadReportData()
+  },
+  { immediate: true }
+)
+
+// When simulationId is resolved (either from early seed or loadReportData chain),
+// check env status. When reopen=1 the caller already triggered reopenEnv server-side;
+// poll until alive rather than probing once to avoid a false "env closed" banner.
 watch(simulationId, (id) => {
   if (id) {
     if (route.query.reopen === '1') {
@@ -325,18 +349,6 @@ watch(simulationId, (id) => {
 
 onMounted(() => {
   addLog('InteractionView initialized')
-  // Seed simulationId early from any available query source so the env-status
-  // watch fires immediately — without waiting for the full loadReportData()
-  // async chain (getReport → getSimulation → getProject).
-  //
-  // Sources, in priority order:
-  //   1. simulation_id  — explicit param set by StageNav / HistoryDatabase (also carries reopen=1)
-  //   2. hist_simulation_id — standard hist param set by Step 4 goToInteraction via histQuery
-  const earlySimId = route.query.simulation_id || getRouteWorkflowIds(route).simulationId
-  if (earlySimId && !simulationId.value) {
-    simulationId.value = earlySimId
-  }
-  loadReportData()
 })
 </script>
 
