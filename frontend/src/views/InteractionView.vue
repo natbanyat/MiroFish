@@ -249,13 +249,13 @@ const checkEnvStatus = async () => {
 // Poll env status until alive — used when a reopen was just triggered by the caller
 // (e.g. StageNav or HistoryDatabase passed reopen=1 after calling reopenEnv).
 // Keeps envChecking=true so the banner stays hidden while we wait.
+// The first probe is immediate so that an already-alive env is confirmed without delay.
 const pollEnvUntilAlive = async (simId) => {
   if (!simId) return
   envChecking.value = true
   addLog('Waiting for environment to come online...')
   try {
     for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000))
       try {
         const res = await getEnvStatus({ simulation_id: simId })
         if (res.data?.env_alive) {
@@ -264,6 +264,7 @@ const pollEnvUntilAlive = async (simId) => {
           return
         }
       } catch { /* keep polling */ }
+      await new Promise(r => setTimeout(r, 2000))
     }
     // Timed out — fall through and show banner
     addLog('Environment startup timed out.')
