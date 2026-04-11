@@ -438,6 +438,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport, getReportStatus } from '../api/report'
+import { reopenEnv } from '../api/simulation'
 import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
 const route = useRoute()
@@ -516,14 +517,21 @@ const retryReport = async () => {
 }
 
 // Navigation
-const goToInteraction = () => {
-  if (props.reportId) {
-    router.push({
-      name: 'Interaction',
-      params: { reportId: props.reportId },
-      query: histQuery.value,
-    })
-  }
+const goToInteraction = async () => {
+  if (!props.reportId) return
+  const simId = props.simulationId || workflowIds.value.simulationId
+  try {
+    if (simId) await reopenEnv({ simulation_id: simId })
+  } catch { /* env may already be alive */ }
+  router.push({
+    name: 'Interaction',
+    params: { reportId: props.reportId },
+    query: {
+      ...histQuery.value,
+      ...(simId ? { simulation_id: simId } : {}),
+      reopen: '1',
+    },
+  })
 }
 
 // Copy as Markdown
