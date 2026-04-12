@@ -45,7 +45,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
@@ -313,15 +313,21 @@ const refreshGraph = () => {
   }
 }
 
-onMounted(async () => {
+watch(() => route.params.simulationId, async (newId, oldId) => {
+  if (oldId !== undefined && newId === oldId) return
+
+  currentSimulationId.value = newId || null
+  projectData.value = null
+  graphData.value = null
+  graphLoading.value = false
+  systemLogs.value = []
+  currentStatus.value = 'processing'
+  existingReportId.value = null
+
   addLog('SimulationView initialized')
-  
-  // 检查并关闭正在运行的模拟（用户从 Step 3 返回时）
   await checkAndStopRunningSimulation()
-  
-  // 加载模拟数据
   loadSimulationData()
-})
+}, { immediate: true })
 </script>
 
 <style scoped>
