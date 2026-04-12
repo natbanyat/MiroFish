@@ -907,10 +907,13 @@ const pollPrepareStatus = async () => {
 
 const fetchProfilesRealtime = async () => {
   if (!props.simulationId) return
-  
+  const capturedSimId = props.simulationId
+
   try {
-    const res = await getSimulationProfilesRealtime(props.simulationId, 'reddit')
-    
+    const res = await getSimulationProfilesRealtime(capturedSimId, 'reddit')
+
+    if (props.simulationId !== capturedSimId) return
+
     if (res.success && res.data) {
       const prevCount = profiles.value.length
       profiles.value = res.data.profiles || []
@@ -972,10 +975,13 @@ const handleEnvironmentSetupFailure = (message) => {
 
 const fetchConfigRealtime = async () => {
   if (!props.simulationId) return
-  
+  const capturedSimId = props.simulationId
+
   try {
-    const res = await getSimulationConfigRealtime(props.simulationId)
-    
+    const res = await getSimulationConfigRealtime(capturedSimId)
+
+    if (props.simulationId !== capturedSimId) return
+
     if (res.success && res.data) {
       const data = res.data
 
