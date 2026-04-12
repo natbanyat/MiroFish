@@ -59,6 +59,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+let activeReportLoadToken = 0
 
 // --- Status Computed ---
 const statusClass = computed(() => {
@@ -115,12 +116,21 @@ const toggleMaximize = (target) => {
 }
 
 // --- Data Logic ---
-const loadReportData = async () => {
+const isActiveReportLoad = (requestToken, reportId) => {
+  return requestToken === activeReportLoadToken && currentReportId.value === reportId
+}
+
+const loadReportData = async (requestToken = activeReportLoadToken) => {
+  const reportId = currentReportId.value
+  if (!reportId) return
+
   try {
-    addLog(`Loading report data: ${currentReportId.value}`)
+    addLog(`Loading report data: ${reportId}`)
     
     // 获取 report 信息以获取 simulation_id
-    const reportRes = await getReport(currentReportId.value)
+    const reportRes = await getReport(reportId)
+    if (!isActiveReportLoad(requestToken, reportId)) return
+
     if (reportRes.success && reportRes.data) {
       const reportData = reportRes.data
       simulationId.value = reportData.simulation_id
@@ -128,19 +138,24 @@ const loadReportData = async () => {
       if (simulationId.value) {
         // 获取 simulation 信息
         const simRes = await getSimulation(simulationId.value)
+        if (!isActiveReportLoad(requestToken, reportId)) return
+
         if (simRes.success && simRes.data) {
           const simData = simRes.data
           
           // 获取 project 信息
           if (simData.project_id) {
             const projRes = await getProject(simData.project_id)
+            if (!isActiveReportLoad(requestToken, reportId)) return
+
             if (projRes.success && projRes.data) {
               projectData.value = projRes.data
               addLog(`Project loaded: ${projRes.data.project_id}`)
               
               // 获取 graph 数据
               if (projRes.data.graph_id) {
-                await loadGraph(projRes.data.graph_id)
+                await loadGraph(projRes.data.graph_id, requestToken, reportId)
+                if (!isActiveReportLoad(requestToken, reportId)) return
               }
             }
           }
@@ -151,23 +166,31 @@ const loadReportData = async () => {
       addLog(`Failed to load report info: ${reportRes.error || 'Unknown error'}`)
     }
   } catch (err) {
-    addLog(`Load error: ${err.message}`)
+    if (isActiveReportLoad(requestToken, reportId)) {
+      addLog(`Load error: ${err.message}`)
+    }
   }
 }
 
-const loadGraph = async (graphId) => {
+const loadGraph = async (graphId, requestToken = activeReportLoadToken, reportId = currentReportId.value) => {
   graphLoading.value = true
 
   try {
     const res = await getGraphData(graphId)
+    if (!isActiveReportLoad(requestToken, reportId)) return
+
     if (res.success) {
       graphData.value = res.data
       addLog('Graph data loaded')
     }
   } catch (err) {
-    addLog(`Graph load failed: ${err.message}`)
+    if (isActiveReportLoad(requestToken, reportId)) {
+      addLog(`Graph load failed: ${err.message}`)
+    }
   } finally {
-    graphLoading.value = false
+    if (isActiveReportLoad(requestToken, reportId)) {
+      graphLoading.value = false
+    }
   }
 }
 
@@ -183,12 +206,17 @@ const refreshGraph = () => {
 watch(() => route.params.reportId, (newId, oldId) => {
   if (oldId !== undefined && newId === oldId) return
 
+  activeReportLoadToken += 1
+  const requestToken = activeReportLoadToken
+
   currentReportId.value = newId || null
   simulationId.value = null
   currentStatus.value = 'processing'
   projectData.value = null
   graphData.value = null
-  loadReportData()
+  graphLoading.value = false
+  systemLogs.value = []
+  loadReportData(requestToken)
 }, { immediate: true })
 
 onMounted(() => {
