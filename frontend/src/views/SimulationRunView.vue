@@ -341,6 +341,13 @@ watch(isSimulating, (newValue) => {
   }
 }, { immediate: true })
 
+// Keep maxRounds in sync when only the query changes (same simulationId, different round
+// count). The simulationId watch handles initial mount and simulationId changes; this covers
+// the Step2 -> Step3 reuse case where the user adjusts maxRounds on the same simulation.
+watch(() => route.query.maxRounds, (newVal) => {
+  maxRounds.value = newVal ? parseInt(newVal) : null
+})
+
 // Reset stale state when the component is reused with a different simulationId
 watch(() => route.params.simulationId, (newId, oldId) => {
   if (oldId !== undefined && newId === oldId) return
