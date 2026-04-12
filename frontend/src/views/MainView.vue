@@ -36,7 +36,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
@@ -354,9 +354,26 @@ const stopGraphPolling = () => {
   }
 }
 
-onMounted(() => {
+watch(() => route.params.projectId, (newId, oldId) => {
+  if (oldId !== undefined && newId === oldId) return
+
+  stopPolling()
+  stopGraphPolling()
+
+  currentProjectId.value = newId || null
+  loading.value = false
+  graphLoading.value = false
+  error.value = ''
+  projectData.value = null
+  graphData.value = null
+  currentPhase.value = -1
+  ontologyProgress.value = null
+  buildProgress.value = null
+  systemLogs.value = []
+  lastAction.value = null
+
   initProject()
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   stopPolling()
