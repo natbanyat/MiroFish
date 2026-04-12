@@ -2471,6 +2471,13 @@ watch(() => props.reportId, (newId) => {
     collapsedSections.value = new Set()
     isComplete.value = false
     isFailed.value = false
+    isRetrying.value = false
+    isDownloading.value = false
+    markdownCopied.value = false
+    reportStatus.value = null
+    reportErrorDetails.value = null
+    reportErrorType.value = null
+    isRetryable.value = true
     startTime.value = null
 
     startPolling()
