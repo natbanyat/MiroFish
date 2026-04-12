@@ -261,6 +261,13 @@ const formatDate = (dateStr) => {
   return d.toLocaleTimeString('en-US', { hour12: false }) + '.' + d.getMilliseconds()
 }
 
+// Reset stale local state when component is reused for a different project
+watch(() => props.projectData?.project_id, (newId, oldId) => {
+  if (oldId === undefined || newId === oldId) return
+  selectedOntologyItem.value = null
+  creatingSimulation.value = false
+})
+
 // Auto-scroll logs
 watch(() => props.systemLogs.length, () => {
   nextTick(() => {
