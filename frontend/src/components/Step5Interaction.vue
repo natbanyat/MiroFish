@@ -945,13 +945,38 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
 })
 
-watch(() => props.reportId, (newId) => {
+watch(() => props.reportId, (newId, oldId) => {
+  if (oldId !== undefined && newId !== oldId) {
+    // Reset all UI and data state when switching to a different report
+    activeTab.value = 'chat'
+    chatTarget.value = 'report_agent'
+    showAgentDropdown.value = false
+    selectedAgent.value = null
+    selectedAgentIndex.value = null
+    showFullProfile.value = true
+    showToolsDetail.value = true
+    chatInput.value = ''
+    chatHistory.value = []
+    chatHistoryCache.value = {}
+    isSending.value = false
+    selectedAgents.value = new Set()
+    surveyQuestion.value = ''
+    surveyResults.value = []
+    isSurveying.value = false
+    reportOutline.value = null
+    generatedSections.value = {}
+    collapsedSections.value = new Set()
+    currentSectionIndex.value = null
+  }
   if (newId) {
     loadReportData()
   }
 }, { immediate: true })
 
-watch(() => props.simulationId, (newId) => {
+watch(() => props.simulationId, (newId, oldId) => {
+  if (oldId !== undefined && newId !== oldId) {
+    profiles.value = []
+  }
   if (newId) {
     loadProfiles()
   }
