@@ -177,17 +177,22 @@ const refreshGraph = () => {
   }
 }
 
-// Watch route params
-watch(() => route.params.reportId, (newId) => {
-  if (newId && newId !== currentReportId.value) {
-    currentReportId.value = newId
-    loadReportData()
-  }
+// Watch route params — handles initial load (old === undefined) and component reuse (different
+// reportId). Resets all stale state before loading so navigating between reports never flashes
+// old status, graph, or simulationId from a previous visit.
+watch(() => route.params.reportId, (newId, oldId) => {
+  if (oldId !== undefined && newId === oldId) return
+
+  currentReportId.value = newId || null
+  simulationId.value = null
+  currentStatus.value = 'processing'
+  projectData.value = null
+  graphData.value = null
+  loadReportData()
 }, { immediate: true })
 
 onMounted(() => {
   addLog('ReportView initialized')
-  loadReportData()
 })
 </script>
 
