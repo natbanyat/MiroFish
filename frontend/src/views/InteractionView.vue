@@ -314,8 +314,10 @@ watch(
       if (newReportId === oldReportId && newSimId === oldSimId) return
     }
 
-    // Sync route context and reset stale env state for the new session
+    // Sync route context and reset stale state for the new session
     currentReportId.value = newReportId || null
+    currentStatus.value = 'ready'
+    systemLogs.value = []
     envAlive.value = true
     envChecking.value = false
     envReopening.value = false
