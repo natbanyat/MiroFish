@@ -1081,6 +1081,38 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
+// Reset stale state when the parent provides a new simulationId (component reuse)
+watch(() => props.simulationId, (newId, oldId) => {
+  if (oldId === undefined || newId === oldId) return
+
+  // Stop all timers from the previous simulation
+  stopPolling()
+  stopProfilesPolling()
+  stopConfigPolling()
+
+  // Reset all state
+  phase.value = 0
+  taskId.value = null
+  prepareProgress.value = 0
+  currentStage.value = ''
+  progressMessage.value = ''
+  profiles.value = []
+  entityTypes.value = []
+  expectedTotal.value = null
+  simulationConfig.value = null
+  selectedProfile.value = null
+  showProfilesDetail.value = true
+  useCustomRounds.value = false
+  customMaxRounds.value = 40
+  lastLoggedMessage = ''
+  lastLoggedProfileCount = 0
+  lastLoggedConfigStage = ''
+
+  if (newId) {
+    startPrepareSimulation()
+  }
+})
+
 onMounted(() => {
   // 自动开始准备流程
   if (props.simulationId) {

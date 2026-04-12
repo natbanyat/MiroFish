@@ -419,6 +419,7 @@ const emitStatusUpdate = (status = normalizedSimulationStatus.value) => {
 // 重置所有状态（用于重新启动模拟）
 const resetAllState = () => {
   phase.value = 0
+  isGeneratingReport.value = false
   runStatus.value = {}
   allActions.value = []
   actionIds.value = new Set()
@@ -798,6 +799,17 @@ watch(() => props.systemLogs?.length, () => {
       logContent.value.scrollTop = logContent.value.scrollHeight
     }
   })
+})
+
+// Reset stale state when the parent provides a new simulationId (component reuse)
+watch(() => props.simulationId, (newId, oldId) => {
+  if (oldId === undefined || newId === oldId) return
+
+  resetAllState()
+
+  if (newId) {
+    checkAndResumeOrStart()
+  }
 })
 
 onMounted(() => {
