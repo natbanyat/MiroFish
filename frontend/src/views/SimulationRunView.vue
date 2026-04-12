@@ -35,7 +35,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkflowShell from '../components/WorkflowShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
@@ -341,16 +341,36 @@ watch(isSimulating, (newValue) => {
   }
 }, { immediate: true })
 
-onMounted(() => {
+// Reset stale state when the component is reused with a different simulationId
+watch(() => route.params.simulationId, (newId, oldId) => {
+  if (oldId !== undefined && newId === oldId) return
+
+  // Stop any running timers from the previous simulation
+  stopGraphRefresh()
+
+  // Reset all state
+  currentSimulationId.value = newId || null
+  maxRounds.value = route.query.maxRounds ? parseInt(route.query.maxRounds) : null
+  existingReportId.value = null
+  minutesPerRound.value = 30
+  projectData.value = null
+  graphData.value = null
+  graphLoading.value = false
+  systemLogs.value = []
+  simulationStatus.value = {
+    status: 'processing',
+    runnerStatus: 'idle',
+    progressPercent: 0,
+    currentRound: 0,
+    totalRounds: 0
+  }
+
   addLog('SimulationRunView initialized')
-  
-  // 记录 maxRounds 配置（值已在初始化时从 query 参数获取）
   if (maxRounds.value) {
     addLog(`Custom simulation rounds: ${maxRounds.value}`)
   }
-  
   loadSimulationData()
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   stopGraphRefresh()
