@@ -187,7 +187,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { createSimulation } from '../api/simulation'
 
@@ -205,30 +205,51 @@ const props = defineProps({
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
 const creatingSimulation = ref(false)
+let createSimulationRequestToken = 0
+let isUnmounted = false
+
+const resetLocalState = () => {
+  selectedOntologyItem.value = null
+  creatingSimulation.value = false
+}
+
+const isActiveCreateSimulationRequest = (requestToken, projectId) => {
+  return !isUnmounted &&
+    requestToken === createSimulationRequestToken &&
+    props.projectData?.project_id === projectId
+}
 
 // 进入环境搭建 - 创建 simulation 并跳转
 const handleEnterEnvSetup = async () => {
-  if (!props.projectData?.project_id || !props.projectData?.graph_id) {
+  const projectId = props.projectData?.project_id
+  const graphId = props.projectData?.graph_id
+
+  if (!projectId || !graphId) {
     console.error('Missing project or graph info')
     return
   }
-  
+
+  const requestToken = ++createSimulationRequestToken
   creatingSimulation.value = true
-  
+
   try {
     const res = await createSimulation({
-      project_id: props.projectData.project_id,
-      graph_id: props.projectData.graph_id,
+      project_id: projectId,
+      graph_id: graphId,
       enable_twitter: true,
       enable_reddit: true
     })
-    
+
+    if (!isActiveCreateSimulationRequest(requestToken, projectId)) {
+      return
+    }
+
     if (res.success && res.data?.simulation_id) {
       router.push({
         name: 'Simulation',
         params: { simulationId: res.data.simulation_id },
         query: {
-          hist_project_id: props.projectData.project_id,
+          hist_project_id: projectId,
           hist_simulation_id: res.data.simulation_id,
         }
       })
@@ -237,10 +258,16 @@ const handleEnterEnvSetup = async () => {
       alert('Failed to create simulation: ' + (res.error || 'Unknown error'))
     }
   } catch (err) {
+    if (!isActiveCreateSimulationRequest(requestToken, projectId)) {
+      return
+    }
+
     console.error('Simulation creation error:', err)
     alert('Simulation creation error: ' + err.message)
   } finally {
-    creatingSimulation.value = false
+    if (requestToken === createSimulationRequestToken) {
+      creatingSimulation.value = false
+    }
   }
 }
 
@@ -261,11 +288,18 @@ const formatDate = (dateStr) => {
   return d.toLocaleTimeString('en-US', { hour12: false }) + '.' + d.getMilliseconds()
 }
 
-// Reset stale local state when component is reused for a different project
+// Reset stale local state when component is reused for a different project.
+// Also invalidate any in-flight createSimulation response so a late response from
+// the previous project cannot push the router into the wrong simulation.
 watch(() => props.projectData?.project_id, (newId, oldId) => {
   if (oldId === undefined || newId === oldId) return
-  selectedOntologyItem.value = null
-  creatingSimulation.value = false
+  createSimulationRequestToken += 1
+  resetLocalState()
+})
+
+onUnmounted(() => {
+  isUnmounted = true
+  createSimulationRequestToken += 1
 })
 
 // Auto-scroll logs
