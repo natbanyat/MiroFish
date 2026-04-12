@@ -118,9 +118,8 @@ class ZepGraphMemoryUpdater:
     BATCH_SIZE = 5
     PLATFORM_DISPLAY_NAMES = {"twitter": "World 1", "reddit": "World 2"}
 
-    def __init__(self, graph_id: str, api_key: Optional[str] = None):
+    def __init__(self, graph_id: str):
         self.graph_id = graph_id
-        # api_key kept for signature compatibility
         self.local_graph: LocalGraph = get_local_graph()
 
         self._activity_queue: Queue = Queue()

@@ -37,7 +37,7 @@ class GraphInfo:
 class GraphBuilderService:
     """Builds a local knowledge graph from text + ontology."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self):
         self.local_graph: LocalGraph = get_local_graph()
         self.task_manager = TaskManager()
         self._llm: Optional[LLMClient] = None

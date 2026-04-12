@@ -65,8 +65,7 @@ class ZepEntityReader:
     Public interface identical to the old Zep-backed version.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
-        # api_key kept for signature compatibility — not used
+    def __init__(self):
         self.local_graph: LocalGraph = get_local_graph()
 
     # ── Low-level accessors ───────────────────────────────────────────────────

@@ -181,7 +181,6 @@ class OasisProfileGenerator:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
-        zep_api_key: Optional[str] = None,
         graph_id: Optional[str] = None,
         llm_client: Optional[LLMClient] = None
     ):

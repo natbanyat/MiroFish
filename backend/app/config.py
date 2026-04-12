@@ -47,9 +47,6 @@ class Config:
     LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL')
     LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME')
     
-    # Zep配置 — no longer required; kept for backward compat
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
-    
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
