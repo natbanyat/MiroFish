@@ -4,6 +4,10 @@
       <div>
         <div class="ops-kicker">Artifact / History / Admin</div>
         <h2 class="ops-title">Operations Snapshot</h2>
+        <div class="ops-live-row">
+          <span class="ops-live-pill" :class="{ active: isLiveSimulation }">{{ isLiveSimulation ? 'live runtime' : 'watching standby' }}</span>
+          <span class="ops-live-meta">Last sync {{ formattedLastUpdated }} · next auto refresh in {{ nextRefreshIn }}s</span>
+        </div>
       </div>
       <button class="refresh-btn" @click="loadDashboard" :disabled="loading || actionLoading">
         {{ loading ? 'Refreshing…' : 'Refresh' }}
@@ -284,6 +288,8 @@ const runStatus = ref({})
 const envStatus = ref({})
 const costTier = ref({})
 const modelRouting = ref({ tasks: {}, providers: {} })
+const lastUpdated = ref(null)
+const nextRefreshIn = ref(60)
 
 const normalizeLifecycle = (simulation = {}) => {
   return simulation.report_id
@@ -483,6 +489,11 @@ const selectedManifest = computed(() => {
   return items.filter(item => item.value)
 })
 
+const formattedLastUpdated = computed(() => {
+  if (!lastUpdated.value) return 'just now'
+  return formatDateTime(lastUpdated.value)
+})
+
 const shortSimId = (id) => {
   if (!id) return 'SIM_UNKNOWN'
   return `SIM_${id.replace('sim_', '').slice(0, 6).toUpperCase()}`
@@ -639,6 +650,8 @@ const loadDashboard = async () => {
     history.value = historyRes.data || []
     costTier.value = tierRes || {}
     modelRouting.value = routingRes || { tasks: {}, providers: {} }
+    lastUpdated.value = new Date()
+    nextRefreshIn.value = 60
 
     const nextSelected = selectedSimulation.value
       ? history.value.find(sim => sim.simulation_id === selectedSimulation.value.simulation_id) || history.value[0] || null
@@ -663,6 +676,7 @@ const isLiveSimulation = computed(() => {
 
 let runtimePollTimer = null
 let dashboardRefreshTimer = null
+let dashboardTickTimer = null
 
 const startPolling = () => {
   stopPolling()
@@ -674,6 +688,10 @@ const startPolling = () => {
     }
   }, 10000)
 
+  dashboardTickTimer = setInterval(() => {
+    nextRefreshIn.value = Math.max(0, nextRefreshIn.value - 1)
+  }, 1000)
+
   // Background poll: refresh full dashboard list every 60s
   dashboardRefreshTimer = setInterval(() => {
     if (!loading.value) loadDashboard()
@@ -683,6 +701,7 @@ const startPolling = () => {
 const stopPolling = () => {
   if (runtimePollTimer) { clearInterval(runtimePollTimer); runtimePollTimer = null }
   if (dashboardRefreshTimer) { clearInterval(dashboardRefreshTimer); dashboardRefreshTimer = null }
+  if (dashboardTickTimer) { clearInterval(dashboardTickTimer); dashboardTickTimer = null }
 }
 
 watch(() => selectedSimulation.value?.simulation_id, (next, prev) => {
@@ -701,6 +720,8 @@ onUnmounted(stopPolling)
 
 <style scoped>
 .ops-dashboard {
+  position: relative;
+  z-index: 1;
   margin-top: 56px;
   padding: 28px 30px 30px;
   border: 1px solid #E5E5E5;
@@ -744,6 +765,37 @@ onUnmounted(stopPolling)
   margin: 0;
   font-size: 1.8rem;
   font-weight: 550;
+}
+
+.ops-live-row {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ops-live-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: #6B7280;
+  background: #F3F4F6;
+}
+
+.ops-live-pill.active {
+  color: #C46B00;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.ops-live-meta {
+  color: #777;
+  font-size: 0.8rem;
 }
 
 .refresh-btn {

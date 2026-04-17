@@ -11,6 +11,7 @@ from flask import request, jsonify, send_file
 from . import report_bp
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.report_decision_pathways import build_decision_pathways
 from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
@@ -239,6 +240,7 @@ def get_generate_status():
                 "message": progress.get('message') or report.error or ("报告已生成" if report.status == ReportStatus.COMPLETED else "报告处理中"),
                 "current_section": progress.get('current_section'),
                 "completed_sections": progress.get('completed_sections', []),
+                "regenerating_section": progress.get('regenerating_section'),
                 "error": report.error,
                 "error_details": report.error_details,
                 "retryable": (report.error_details or {}).get('retryable', False),
@@ -482,6 +484,30 @@ def download_report(report_id: str):
         }), 500
 
 
+@report_bp.route('/<report_id>/decision-pathways', methods=['GET'])
+def get_decision_pathways(report_id: str):
+    """Build a minimum viable decision-pathways model from report output."""
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"报告不存在: {report_id}"
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "data": build_decision_pathways(report)
+        })
+    except Exception as e:
+        logger.error(f"生成Decision Pathways失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 @report_bp.route('/<report_id>/pdf', methods=['GET'])
 def download_report_pdf(report_id: str):
     """
@@ -504,15 +530,19 @@ def download_report_pdf(report_id: str):
         else:
             md_content = report.markdown_content or ""
 
+        if not md_content.strip() and report.outline:
+            md_content = ReportManager.assemble_full_report(report_id, report.outline)
+
         import markdown as md_lib
         html_body = md_lib.markdown(md_content, extensions=['fenced_code', 'tables'])
 
-        title = (report.title or report_id).replace('<', '&lt;').replace('>', '&gt;')
+        report_title = ((report.outline.title if report.outline else None) or report_id)
+        safe_title = report_title.replace('<', '&lt;').replace('>', '&gt;')
         html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
     body {{ font-family: Georgia, serif; max-width: 820px; margin: 0 auto; padding: 40px 60px; color: #1a1a1a; line-height: 1.7; }}
     h1 {{ font-size: 2em; border-bottom: 2px solid #222; padding-bottom: 12px; margin-bottom: 8px; }}
@@ -544,7 +574,7 @@ def download_report_pdf(report_id: str):
                 mimetype='application/pdf'
             )
         except ImportError:
-            # WeasyPrint not available — serve printable HTML instead
+            # WeasyPrint not available — serve printable HTML fallback
             logger.warning("weasyprint not installed; serving printable HTML fallback")
             return send_file(
                 io.BytesIO(html.encode('utf-8')),
@@ -679,6 +709,245 @@ def chat_with_report_agent():
         
     except Exception as e:
         logger.error(f"对话失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# ============== 章节重新生成接口 ==============
+
+@report_bp.route('/<report_id>/regenerate-section', methods=['POST'])
+def regenerate_section(report_id: str):
+    """
+    Regenerate a single section of an existing report (async).
+
+    Request (JSON):
+        {
+            "section_index": 2   // 1-based section number to regenerate
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "report_id": "report_xxxx",
+                "section_index": 2,
+                "task_id": "task_xxxx",
+                "status": "regenerating"
+            }
+        }
+    """
+    try:
+        data = request.get_json() or {}
+        section_index = data.get('section_index')
+
+        if section_index is None or not isinstance(section_index, int) or section_index < 1:
+            return jsonify({
+                "success": False,
+                "error": "section_index (positive integer) is required"
+            }), 400
+
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        if not report.outline or not report.outline.sections:
+            return jsonify({
+                "success": False,
+                "error": "Report outline is missing; cannot regenerate section"
+            }), 400
+
+        total_sections = len(report.outline.sections)
+        if section_index > total_sections:
+            return jsonify({
+                "success": False,
+                "error": f"section_index {section_index} out of range (report has {total_sections} sections)"
+            }), 400
+
+        section_title = report.outline.sections[section_index - 1].title
+
+        task_manager = TaskManager()
+        task_id = task_manager.create_task(
+            task_type="report_regenerate_section",
+            metadata={
+                "report_id": report_id,
+                "section_index": section_index,
+                "section_title": section_title,
+            }
+        )
+
+        def run_regenerate():
+            try:
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.PROCESSING,
+                    progress=0,
+                    message=f"Regenerating section {section_index}: {section_title}"
+                )
+
+                # Read completed_sections from existing progress so we can preserve them
+                existing_progress = ReportManager.get_progress(report_id) or {}
+                completed_sections = list(existing_progress.get('completed_sections', []))
+
+                ReportManager.update_progress(
+                    report_id, "regenerating", 0,
+                    f"Regenerating section {section_index}: {section_title}",
+                    current_section=section_title,
+                    completed_sections=completed_sections,
+                    regenerating_section=section_index,
+                )
+
+                agent = ReportAgent(
+                    graph_id=report.graph_id,
+                    simulation_id=report.simulation_id,
+                    simulation_requirement=report.simulation_requirement,
+                    boost_llm=LLMClient.from_boost_config()
+                )
+
+                def progress_callback(stage, progress, message):
+                    task_manager.update_task(task_id, progress=progress, message=f"[{stage}] {message}")
+                    ReportManager.update_progress(
+                        report_id, "regenerating", progress, message,
+                        current_section=section_title,
+                        completed_sections=completed_sections,
+                        regenerating_section=section_index,
+                    )
+
+                agent.regenerate_section(
+                    report_id=report_id,
+                    section_index=section_index,
+                    progress_callback=progress_callback,
+                )
+
+                generated_sections = ReportManager.get_generated_sections(report_id)
+                generated_indexes = {
+                    section_info.get('section_index')
+                    for section_info in generated_sections
+                    if section_info.get('section_index')
+                }
+                completed_sections = [
+                    outline_section.title
+                    for idx, outline_section in enumerate(report.outline.sections, start=1)
+                    if idx in generated_indexes
+                ]
+
+                report.error = None
+                report.error_details = None
+
+                if len(generated_indexes) >= total_sections:
+                    report.status = ReportStatus.COMPLETED
+                    report.markdown_content = ReportManager.assemble_full_report(report_id, report.outline)
+                    progress_status = "completed"
+                    progress_value = 100
+                    progress_message = f"Section {section_index} regenerated successfully"
+                else:
+                    missing_sections = [
+                        idx for idx in range(1, total_sections + 1)
+                        if idx not in generated_indexes
+                    ]
+                    report.status = ReportStatus.FAILED
+                    # Do NOT wipe markdown_content: the already-assembled partial report
+                    # is better than showing nothing. The caller can still view sections 1..N-1.
+                    report.error = (
+                        f"Section {section_index} regenerated successfully, but the report is still missing sections: "
+                        + ", ".join(str(idx) for idx in missing_sections)
+                    )
+                    report.error_details = {
+                        "error_type": "missing_sections",
+                        "retryable": True,
+                        "message": report.error,
+                        "missing_sections": missing_sections,
+                        "regenerated_section": section_index,
+                    }
+                    progress_status = "failed"
+                    progress_value = int((len(completed_sections) / total_sections) * 100) if total_sections else 0
+                    progress_message = report.error
+
+                ReportManager.save_report(report)
+                ReportManager.update_progress(
+                    report_id, progress_status, progress_value, progress_message,
+                    current_section=None,
+                    completed_sections=completed_sections,
+                    regenerating_section=None,
+                )
+
+                task_result = {
+                    "report_id": report_id,
+                    "section_index": section_index,
+                    "status": progress_status
+                }
+                if progress_status == "completed":
+                    task_manager.complete_task(task_id, result=task_result)
+                else:
+                    task_manager.update_task(
+                        task_id,
+                        status=TaskStatus.FAILED,
+                        progress=progress_value,
+                        message=progress_message,
+                        error=progress_message,
+                        result=task_result,
+                    )
+
+            except Exception as e:
+                logger.error(f"Section regeneration failed for {report_id}[{section_index}]: {e}")
+                error_message = f"Section {section_index} regeneration failed: {str(e)}"
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.FAILED,
+                    progress=0,
+                    message=error_message,
+                    error=str(e),
+                    result={
+                        "report_id": report_id,
+                        "section_index": section_index,
+                        "status": "failed",
+                    },
+                )
+                try:
+                    existing_progress = ReportManager.get_progress(report_id) or {}
+                    failed_report = ReportManager.get_report(report_id)
+                    if failed_report:
+                        failed_report.status = ReportStatus.FAILED
+                        failed_report.error = error_message
+                        failed_report.error_details = {
+                            "error_type": getattr(e, 'error_type', 'section_regeneration_failed'),
+                            "retryable": getattr(e, 'retryable', True),
+                            "message": error_message,
+                            "regenerated_section": section_index,
+                        }
+                        ReportManager.save_report(failed_report)
+                    ReportManager.update_progress(
+                        report_id, "failed", 0,
+                        error_message,
+                        current_section=None,
+                        completed_sections=existing_progress.get('completed_sections', []),
+                        regenerating_section=None,
+                    )
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=run_regenerate, daemon=True)
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "report_id": report_id,
+                "section_index": section_index,
+                "section_title": section_title,
+                "task_id": task_id,
+                "status": "regenerating",
+                "message": f"Section '{section_title}' regeneration started"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to start section regeneration: {e}")
         return jsonify({
             "success": False,
             "error": str(e),

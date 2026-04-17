@@ -85,24 +85,28 @@ const navigate = async (stage) => {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 2px;
-  background: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 10px;
-  padding: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  background: rgba(17, 17, 17, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
   z-index: 9999;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
 }
 
 .stage-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: none;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   background: transparent;
-  color: #888;
+  color: #9CA3AF;
   font-family: 'JetBrains Mono', 'Space Grotesk', monospace;
   font-size: 12px;
   cursor: pointer;
@@ -111,13 +115,16 @@ const navigate = async (stage) => {
 }
 
 .stage-btn:hover:not(.disabled):not(.active) {
-  background: #2a2a2a;
-  color: #ccc;
+  background: rgba(255, 255, 255, 0.08);
+  color: #F3F4F6;
+  transform: translateY(-1px);
 }
 
 .stage-btn.active {
-  background: #333;
+  background: linear-gradient(135deg, rgba(255, 69, 0, 0.9), rgba(255, 122, 0, 0.84));
+  border-color: rgba(255, 255, 255, 0.16);
   color: #fff;
+  box-shadow: 0 10px 24px rgba(255, 69, 0, 0.24);
 }
 
 .stage-btn.disabled {
@@ -127,7 +134,7 @@ const navigate = async (stage) => {
 
 .stage-step {
   font-size: 10px;
-  opacity: 0.6;
+  opacity: 0.72;
 }
 
 .stage-icon {
@@ -136,5 +143,21 @@ const navigate = async (stage) => {
 
 .stage-label {
   font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .stage-nav {
+    gap: 4px;
+    bottom: 18px;
+    padding: 6px;
+  }
+
+  .stage-btn {
+    padding: 8px 10px;
+  }
+
+  .stage-label {
+    font-size: 11px;
+  }
 }
 </style>

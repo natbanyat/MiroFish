@@ -38,7 +38,8 @@ class ReportGenerationError(Exception):
 
     def __init__(self, message: str, *, error_type: str = "unknown", retryable: bool = False,
                  provider: Optional[str] = None, model: Optional[str] = None,
-                 stage: Optional[str] = None, raw_error: Optional[str] = None):
+                 stage: Optional[str] = None, raw_error: Optional[str] = None,
+                 section_title: Optional[str] = None, section_index: Optional[int] = None):
         super().__init__(message)
         self.message = message
         self.error_type = error_type
@@ -47,6 +48,8 @@ class ReportGenerationError(Exception):
         self.model = model
         self.stage = stage
         self.raw_error = raw_error or message
+        self.section_title = section_title
+        self.section_index = section_index
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -57,6 +60,8 @@ class ReportGenerationError(Exception):
             "model": self.model,
             "stage": self.stage,
             "raw_error": self.raw_error,
+            "section_title": self.section_title,
+            "section_index": self.section_index,
         }
 
 
@@ -1074,8 +1079,95 @@ class ReportAgent:
                 ]
             )
     
+    @staticmethod
+    def _extract_section_content(response: Optional[str]) -> str:
+        """Extract candidate section content from an LLM response."""
+        if not response or not isinstance(response, str):
+            return ""
+
+        if "Final Answer:" in response:
+            return response.split("Final Answer:")[-1].strip()
+
+        return re.sub(r'<tool_call>.*?</tool_call>', '', response, flags=re.DOTALL).strip()
+
+    @staticmethod
+    def _is_placeholder_content(text: str) -> bool:
+        """Return True if text is effectively empty or placeholder-like, not real prose."""
+        stripped = (text or "").strip()
+        if not stripped:
+            return True
+
+        if re.fullmatch(r'[\.。…\s]+', stripped):
+            return True
+
+        if len(stripped) < 24 and re.fullmatch(r'[\.\s…。\[\]<>()（）\-_/\\|,:;]+', stripped):
+            return True
+
+        normalized = stripped.lower()
+        normalized = re.sub(r'[`*_#>\-\s]+', ' ', normalized).strip()
+        normalized = normalized.strip('[](){}<>.,，。!！?？:：;；/\\|')
+        if not normalized:
+            return True
+
+        placeholder_words = {
+            'tbd', 'todo', 'n/a', 'na', 'none', 'null', 'placeholder',
+            'pending', 'omitted', 'redacted', 'same as above', 'continue'
+        }
+        if normalized in placeholder_words:
+            return True
+
+        collapsed = re.sub(r'[^a-z0-9\u4e00-\u9fff]+', '', normalized)
+        return collapsed in {
+            '', 'tbd', 'todo', 'na', 'none', 'null', 'placeholder',
+            'pending', 'omitted', 'redacted', 'sameasabove', 'continue'
+        }
+
+    def _recover_section_content(
+        self,
+        messages: List[Dict[str, Any]],
+        section_title: str,
+        bad_response: Optional[str] = None,
+    ) -> Optional[str]:
+        """Single strong recovery call after empty/placeholder output."""
+        recovery_messages = list(messages)
+        if bad_response is not None and (
+            not recovery_messages
+            or recovery_messages[-1].get("role") != "assistant"
+            or recovery_messages[-1].get("content") != bad_response
+        ):
+            recovery_messages.append({"role": "assistant", "content": bad_response})
+        recovery_messages.append({
+            "role": "user",
+            "content": (
+                f"Your previous reply for section \"{section_title}\" did not contain usable content. "
+                "It was empty, whitespace-only, ellipsis-like, or placeholder text. "
+                "Using ONLY the tool results already present in this conversation, write the complete section now. "
+                "Do NOT call any more tools. Start with 'Final Answer:'. Do not output placeholders like '...', '…', 'TBD', or '[omitted]'. "
+                "If evidence is incomplete, say so explicitly, but still produce the strongest complete section possible from the retrieved material."
+            ),
+        })
+        try:
+            response = self.llm.chat(
+                messages=recovery_messages,
+                temperature=0.4,
+                max_tokens=3072,
+                reasoning_effort="low",
+            )
+        except (APIConnectionError, APITimeoutError, RateLimitError) as e:
+            logger.warning(f"Recovery call failed for section '{section_title}': {e}")
+            return None
+
+        if not isinstance(response, str):
+            logger.warning(f"Recovery call returned non-string for section '{section_title}': {type(response)}")
+            return None
+        content = self._extract_section_content(response)
+        if self._is_placeholder_content(content):
+            logger.warning(f"Recovery returned unusable content for section '{section_title}'")
+            return None
+        return content
+
     def _generate_section_react(
-        self, 
+        self,
         section: ReportSection,
         outline: ReportOutline,
         previous_sections: List[str],
@@ -1255,7 +1347,27 @@ class ReportAgent:
                     continue
 
                 # 正常结束
-                final_answer = response.split("Final Answer:")[-1].strip()
+                final_answer = self._extract_section_content(response)
+                if self._is_placeholder_content(final_answer):
+                    logger.warning(
+                        f"章节 {section.title} Final Answer 内容为空或占位符，尝试恢复"
+                    )
+                    recovered = self._recover_section_content(
+                        messages,
+                        section.title,
+                        bad_response=response,
+                    )
+                    if recovered:
+                        final_answer = recovered
+                    else:
+                        raise ReportGenerationError(
+                            f"章节《{section.title}》生成内容为空，请稍后重试",
+                            error_type="empty_section_content",
+                            retryable=True,
+                            stage="generating",
+                            section_title=section.title,
+                            section_index=section_index,
+                        )
                 logger.info(f"章节 {section.title} 生成完成（工具调用: {tool_calls_count}次）")
 
                 if self.report_logger:
@@ -1354,7 +1466,27 @@ class ReportAgent:
             # 工具调用已足够，LLM 输出了内容但没带 "Final Answer:" 前缀
             # 直接将这段内容作为最终答案，不再空转
             logger.info(f"章节 {section.title} 未检测到 'Final Answer:' 前缀，直接采纳LLM输出作为最终内容（工具调用: {tool_calls_count}次）")
-            final_answer = response.strip()
+            final_answer = self._extract_section_content(response)
+            if self._is_placeholder_content(final_answer):
+                logger.warning(
+                    f"章节 {section.title} 直接采纳路径内容为空或占位符，尝试恢复"
+                )
+                recovered = self._recover_section_content(
+                    messages,
+                    section.title,
+                    bad_response=response,
+                )
+                if recovered:
+                    final_answer = recovered
+                else:
+                    raise ReportGenerationError(
+                        f"章节《{section.title}》生成内容为空，请稍后重试",
+                        error_type="empty_section_content",
+                        retryable=True,
+                        stage="generating",
+                        section_title=section.title,
+                        section_index=section_index,
+                    )
 
             if self.report_logger:
                 self.report_logger.log_section_content(
@@ -1390,11 +1522,32 @@ class ReportAgent:
                 llm_client=self.boost_llm,
                 default_message=f"章节《{section.title}》生成失败，请稍后重试",
             )
-        elif "Final Answer:" in response:
-            final_answer = response.split("Final Answer:")[-1].strip()
-        else:
-            final_answer = response
-        
+        final_answer = self._extract_section_content(response)
+
+        if self._is_placeholder_content(final_answer):
+            logger.warning(
+                f"章节 {section.title} 强制收尾内容为空或占位符，尝试恢复"
+            )
+            recovered = self._recover_section_content(
+                messages,
+                section.title,
+                bad_response=response,
+            )
+            if recovered:
+                final_answer = recovered
+            else:
+                logger.error(
+                    f"章节 {section.title} 强制收尾后内容仍为空，终止整个报告生成"
+                )
+                raise ReportGenerationError(
+                    f"章节《{section.title}》强制收尾后内容为空，请稍后重试",
+                    error_type="empty_section_content",
+                    retryable=True,
+                    stage="generating",
+                    section_title=section.title,
+                    section_index=section_index,
+                )
+
         # 记录章节内容生成完成日志
         if self.report_logger:
             self.report_logger.log_section_content(
@@ -1403,7 +1556,7 @@ class ReportAgent:
                 content=final_answer,
                 tool_calls_count=tool_calls_count
             )
-        
+
         return final_answer
     
     def generate_report(
@@ -1506,7 +1659,10 @@ class ReportAgent:
             
             # 阶段2: 逐章节生成（分章节保存）
             report.status = ReportStatus.GENERATING
-            
+            # Persist GENERATING status immediately so that if the thread dies
+            # mid-generation meta.json reflects "generating" rather than "planning".
+            ReportManager.save_report(report)
+
             total_sections = len(outline.sections)
             generated_sections = []  # 保存内容用于上下文
             
@@ -1644,8 +1800,110 @@ class ReportAgent:
             
             return report
     
+    def regenerate_section(
+        self,
+        report_id: str,
+        section_index: int,
+        progress_callback: Optional[Callable[[str, int, str], None]] = None,
+    ) -> str:
+        """
+        Regenerate a single section for an existing report.
+
+        Loads the outline and completed previous sections as context, runs the
+        ReACT generation loop for the target section only, saves the result, and
+        reassembles full_report.md if all sections are present.
+
+        Args:
+            report_id: Existing report ID (files are updated in-place).
+            section_index: 1-based index of the section to regenerate.
+            progress_callback: Optional (stage, progress, message) callback.
+
+        Returns:
+            The regenerated section content string.
+
+        Raises:
+            ReportGenerationError: on missing outline, bad index, or generation failure.
+        """
+        outline = ReportManager.load_outline(report_id)
+        if not outline:
+            raise ReportGenerationError(
+                f"Cannot regenerate section: outline not found for report {report_id}",
+                error_type="missing_outline",
+                retryable=False,
+                stage="regenerating",
+            )
+
+        total = len(outline.sections)
+        if section_index < 1 or section_index > total:
+            raise ReportGenerationError(
+                f"Section index {section_index} out of range (valid: 1–{total})",
+                error_type="invalid_section_index",
+                retryable=False,
+                stage="regenerating",
+            )
+
+        section = outline.sections[section_index - 1]
+
+        # Build previous-sections context from already-saved files
+        previous_sections: List[str] = []
+        for i in range(1, section_index):
+            content = ReportManager.load_section_content(report_id, i)
+            if content:
+                previous_sections.append(content.strip())
+
+        # Attach loggers to this report for this run
+        self.report_logger = ReportLogger(report_id)
+        self.console_logger = ReportConsoleLogger(report_id)
+
+        try:
+            if progress_callback:
+                progress_callback("regenerating", 10, f"Starting regeneration: {section.title}")
+
+            section_content = self._generate_section_react(
+                section=section,
+                outline=outline,
+                previous_sections=previous_sections,
+                progress_callback=progress_callback,
+                section_index=section_index,
+            )
+
+            section.content = section_content
+            ReportManager.save_section(report_id, section_index, section)
+
+            # Log the completion so the frontend can detect it
+            if self.report_logger:
+                full_content = f"## {section.title}\n\n{section_content}"
+                self.report_logger.log_section_full_complete(
+                    section_title=section.title,
+                    section_index=section_index,
+                    full_content=full_content.strip(),
+                )
+                self.report_logger.log(
+                    action="section_regenerated",
+                    stage="completed",
+                    section_title=section.title,
+                    section_index=section_index,
+                    details={"message": f"Section '{section.title}' regenerated successfully"},
+                )
+
+            # Reassemble full_report.md whenever all section files are present
+            existing_count = len(ReportManager.get_generated_sections(report_id))
+            if existing_count >= total:
+                ReportManager.assemble_full_report(report_id, outline)
+
+            return section_content
+
+        except ReportGenerationError:
+            raise
+        except Exception as e:
+            raise self._build_generation_error(e, stage="regenerating") from e
+        finally:
+            if self.console_logger:
+                self.console_logger.close()
+                self.console_logger = None
+
     def chat(
-        self, 
+        self,
         message: str,
         chat_history: List[Dict[str, str]] = None
     ) -> Dict[str, Any]:
@@ -2096,32 +2354,61 @@ class ReportManager:
     
     @classmethod
     def update_progress(
-        cls, 
-        report_id: str, 
-        status: str, 
-        progress: int, 
+        cls,
+        report_id: str,
+        status: str,
+        progress: int,
         message: str,
         current_section: str = None,
-        completed_sections: List[str] = None
+        completed_sections: List[str] = None,
+        regenerating_section: Optional[int] = None,
     ) -> None:
         """
         更新报告生成进度
-        
+
         前端可以通过读取progress.json获取实时进度
         """
         cls._ensure_report_folder(report_id)
-        
+
         progress_data = {
             "status": status,
             "progress": max(0, min(100, progress)),
             "message": message,
             "current_section": current_section,
             "completed_sections": completed_sections or [],
+            "regenerating_section": regenerating_section,
             "updated_at": datetime.now().isoformat()
         }
-        
+
         with open(cls._get_progress_path(report_id), 'w', encoding='utf-8') as f:
             json.dump(progress_data, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load_outline(cls, report_id: str) -> Optional['ReportOutline']:
+        """Load report outline from outline.json."""
+        path = cls._get_outline_path(report_id)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to read outline {path}: {e}")
+            return None
+        sections = [
+            ReportSection(title=s['title'], content=s.get('content', ''))
+            for s in data.get('sections', [])
+        ]
+        return ReportOutline(title=data['title'], summary=data['summary'], sections=sections)
+
+    @classmethod
+    def load_section_content(cls, report_id: str, section_index: int) -> Optional[str]:
+        """Load raw content of a single saved section file."""
+        path = cls._get_section_path(report_id, section_index)
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
     
     @classmethod
     def get_progress(cls, report_id: str) -> Optional[Dict[str, Any]]:
@@ -2385,7 +2672,7 @@ class ReportManager:
                 with open(full_report_path, 'r', encoding='utf-8') as f:
                     markdown_content = f.read()
         
-        return Report(
+        report = Report(
             report_id=data['report_id'],
             simulation_id=data['simulation_id'],
             graph_id=data['graph_id'],
@@ -2398,6 +2685,52 @@ class ReportManager:
             error=data.get('error'),
             error_details=data.get('error_details')
         )
+
+        # Detect stalled reports: if the report is in a non-terminal state but
+        # progress.json has not been updated for more than STALE_MINUTES minutes,
+        # the generation thread likely died without cleaning up.  Mark the report
+        # as failed so the caller can offer a clean retry.
+        STALE_MINUTES = 30
+        if report.status in (ReportStatus.PLANNING, ReportStatus.GENERATING):
+            try:
+                progress = cls.get_progress(report_id)
+                if progress:
+                    updated_at_str = progress.get("updated_at", "")
+                    if updated_at_str:
+                        updated_at = datetime.fromisoformat(updated_at_str)
+                        age_minutes = (datetime.now() - updated_at).total_seconds() / 60
+                        if age_minutes > STALE_MINUTES:
+                            logger.warning(
+                                f"Report {report_id} is stale "
+                                f"({age_minutes:.1f} min since last update), marking as failed"
+                            )
+                            report.status = ReportStatus.FAILED
+                            report.error = (
+                                "报告生成进程意外终止（超过30分钟无进度更新），请重新生成"
+                            )
+                            report.error_details = {
+                                "error_type": "stalled",
+                                "retryable": True,
+                                "message": report.error,
+                                "last_progress_update": updated_at_str,
+                                "stale_minutes": round(age_minutes, 1),
+                            }
+                            # Persist the failed state so subsequent reads don't repeat this work
+                            try:
+                                cls.save_report(report)
+                                cls.update_progress(
+                                    report_id,
+                                    "failed",
+                                    progress.get("progress", 0),
+                                    report.error,
+                                    completed_sections=progress.get("completed_sections", []),
+                                )
+                            except Exception:
+                                pass
+            except Exception as _e:
+                logger.debug(f"Stale-check failed for {report_id}: {_e}")
+
+        return report
     
     @classmethod
     def get_report_by_simulation(cls, simulation_id: str) -> Optional[Report]:

@@ -5,6 +5,9 @@
     step-name="Run Simulation"
     :status-class="statusClass"
     :status-text="statusText"
+    :show-refresh="true"
+    :refresh-disabled="graphLoading"
+    @refresh="handleRefresh"
   >
     <template #left>
       <GraphPanel 
@@ -313,6 +316,12 @@ const refreshGraph = () => {
   if (projectData.value?.graph_id) {
     loadGraph(projectData.value.graph_id)
   }
+}
+
+const handleRefresh = async () => {
+  addLog('Manual view refresh triggered')
+  await loadSimulationData()
+  refreshGraph()
 }
 
 // --- Auto Refresh Logic ---

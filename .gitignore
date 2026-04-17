@@ -41,9 +41,11 @@ yarn-error.log*
 .coverage
 htmlcov/
 
-# Cursor
+# Local coding-agent metadata
 .cursor/
 .claude/
+.codex
+.codex/
 
 # 文档与测试程序
 mydoc/
@@ -52,6 +54,11 @@ mytest/
 # 日志文件
 backend/logs/
 *.log
+
+# 本地数据库与备份
+backend/graphs.db
+backend/graphs.db-*
+.env-old
 
 # 上传文件
 backend/uploads/

@@ -5,6 +5,9 @@
     step-name="Interaction"
     :status-class="statusClass"
     :status-text="statusText"
+    :show-refresh="true"
+    :refresh-disabled="graphLoading || envChecking || envReopening"
+    @refresh="handleRefresh"
   >
     <template #left>
       <GraphPanel 
@@ -230,6 +233,17 @@ const refreshGraph = () => {
   if (projectData.value?.graph_id) {
     loadGraph(projectData.value.graph_id)
   }
+}
+
+const handleRefresh = async () => {
+  addLog('Manual view refresh triggered')
+  if (currentReportId.value) {
+    await loadReportData()
+  } else if (simulationId.value) {
+    await loadFromSimulation(simulationId.value)
+  }
+  await checkEnvStatus()
+  refreshGraph()
 }
 
 // Check environment alive status (single probe)

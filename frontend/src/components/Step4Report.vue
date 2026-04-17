@@ -10,8 +10,16 @@
             <div class="report-meta">
               <span class="report-tag">Investment Memo</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
-              <div class="report-actions" v-if="isComplete">
+              <div class="report-actions" v-if="reportId">
                 <button
+                  class="report-refresh-btn"
+                  :disabled="isRefreshing"
+                  @click="refreshReportState"
+                >
+                  {{ isRefreshing ? 'Refreshing...' : 'Refresh Status' }}
+                </button>
+                <button
+                  v-if="isComplete"
                   class="copy-md-btn"
                   :class="{ copied: markdownCopied }"
                   @click="copyAsMarkdown"
@@ -19,7 +27,7 @@
                   {{ markdownCopied ? 'Copied!' : 'Copy as MD' }}
                 </button>
                 <button
-                  v-if="reportId"
+                  v-if="isComplete && reportId"
                   class="download-pdf-btn"
                   :disabled="isDownloading"
                   @click="handleDownloadPdf"
@@ -33,8 +41,25 @@
             <div class="header-divider"></div>
           </div>
 
+          <div class="report-surface-switcher" v-if="isComplete">
+            <button
+              class="surface-tab"
+              :class="{ 'surface-tab--active': reportSurfaceMode === 'report' }"
+              @click="reportSurfaceMode = 'report'"
+            >
+              Final Report
+            </button>
+            <button
+              class="surface-tab"
+              :class="{ 'surface-tab--active': reportSurfaceMode === 'pathways' }"
+              @click="reportSurfaceMode = 'pathways'"
+            >
+              Decision Pathways
+            </button>
+          </div>
+
           <!-- Sections List -->
-          <div class="sections-list">
+          <div v-if="reportSurfaceMode === 'report'" class="sections-list">
             <div
               v-for="(section, idx) in reportOutline.sections"
               :key="idx"
@@ -50,15 +75,36 @@
                 <span class="section-number">{{ String(idx + 1).padStart(2, '0') }}</span>
                 <h3 class="section-title">{{ section.title }}</h3>
                 <span class="memo-tag">{{ getMemoSectionLabel(idx) }}</span>
-                <svg 
-                  v-if="isSectionCompleted(idx + 1)" 
-                  class="collapse-icon" 
+                <button
+                  v-if="reportId && !regeneratingSections[idx + 1]"
+                  class="regen-section-btn"
+                  :disabled="!canRegenerateSection(idx + 1)"
+                  :title="getRegenerateSectionTitle(idx + 1)"
+                  @click.stop="handleRegenerateSection(idx + 1)"
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 .49-5.5"></path>
+                  </svg>
+                  Regenerate
+                </button>
+                <!-- Spinner while regenerating this section -->
+                <span v-if="regeneratingSections[idx + 1]" class="regen-spinner">
+                  <svg class="spin" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="12" cy="12" r="10" stroke="#E5E7EB" stroke-width="4"></circle>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke-width="4" stroke-linecap="round"></path>
+                  </svg>
+                  Regenerating…
+                </span>
+                <svg
+                  v-if="isSectionCompleted(idx + 1)"
+                  class="collapse-icon"
                   :class="{ 'is-collapsed': collapsedSections.has(idx) }"
-                  viewBox="0 0 24 24" 
-                  width="20" 
-                  height="20" 
-                  fill="none" 
-                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="none"
+                  stroke="currentColor"
                   stroke-width="2"
                 >
                   <polyline points="6 9 12 15 18 9"></polyline>
@@ -87,6 +133,14 @@
               </div>
             </div>
           </div>
+
+          <DecisionPathwaysPanel
+            v-else
+            :pathways="decisionPathways"
+            :loading="isLoadingDecisionPathways"
+            :error="decisionPathwaysError"
+            @refresh="loadDecisionPathways"
+          />
         </div>
 
         <!-- Waiting State -->
@@ -121,9 +175,22 @@
               <template v-if="reportErrorDetails?.stage">Stage: {{ reportErrorDetails.stage }}</template><template v-if="reportErrorDetails?.stage && reportErrorDetails?.section_title"> · </template><template v-if="reportErrorDetails?.section_title">Section: {{ reportErrorDetails.section_title }}</template>
             </span>
           </div>
-          <button class="retry-btn" @click="retryReport" :disabled="isRetrying || !isRetryable">
-            {{ isRetrying ? 'Restarting...' : (isRetryable ? 'Retry' : 'Retry Unavailable') }}
-          </button>
+          <div class="failed-actions">
+            <button class="refresh-status-btn" @click="refreshReportState" :disabled="isRefreshing">
+              {{ isRefreshing ? 'Refreshing...' : 'Refresh Status' }}
+            </button>
+            <button
+              v-if="failedSectionIndex"
+              class="regen-failed-btn"
+              @click="handleRegenerateSection(failedSectionIndex)"
+              :disabled="regeneratingSections[failedSectionIndex]"
+            >
+              {{ regeneratingSections[failedSectionIndex] ? 'Regenerating...' : `Regenerate Section ${String(failedSectionIndex).padStart(2, '0')}` }}
+            </button>
+            <button class="retry-btn" @click="retryReport" :disabled="isRetrying || !isRetryable">
+              {{ isRetrying ? 'Restarting...' : (isRetryable ? 'Retry' : 'Retry Unavailable') }}
+            </button>
+          </div>
         </div>
 
         <!-- Workflow Overview (flat, status-based palette) -->
@@ -437,7 +504,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getAgentLog, getConsoleLog, downloadReportPdf, generateReport, getReportStatus } from '../api/report'
+import DecisionPathwaysPanel from './DecisionPathwaysPanel.vue'
+import { getAgentLog, getConsoleLog, getDecisionPathways, downloadReportPdf, generateReport, getReportStatus, regenerateSection } from '../api/report'
 import { reopenEnv } from '../api/simulation'
 import { buildHistoryQuery, getRouteWorkflowIds } from '../workflow/history'
 
@@ -464,8 +532,10 @@ const handleDownloadPdf = async () => {
   if (!props.reportId || isDownloading.value) return
   isDownloading.value = true
   try {
-    await downloadReportPdf(props.reportId)
+    const result = await downloadReportPdf(props.reportId)
+    emit('add-log', result?.isPdf ? `PDF exported: ${result.filename}` : `Printable export ready: ${result?.filename || props.reportId}`)
   } catch (e) {
+    emit('add-log', `PDF export failed: ${e.message}`)
     console.error('PDF download failed:', e)
   } finally {
     isDownloading.value = false
@@ -513,6 +583,43 @@ const retryReport = async () => {
     emit('add-log', `Retry error: ${e.message}`)
   } finally {
     isRetrying.value = false
+  }
+}
+
+const canRegenerateSection = (sectionIndex) => {
+  if (!props.reportId) return false
+  if (regeneratingSections[sectionIndex]) return false
+  return isComplete.value || isFailed.value
+}
+
+const getRegenerateSectionTitle = (sectionIndex) => {
+  if (canRegenerateSection(sectionIndex)) {
+    return `Regenerate section ${sectionIndex}`
+  }
+  return 'Section regeneration unlocks after the initial report run finishes'
+}
+
+// Regenerate a single section
+const handleRegenerateSection = async (sectionIndex) => {
+  if (!canRegenerateSection(sectionIndex)) return
+  regeneratingSections[sectionIndex] = true
+  // Clear the existing content so the loading state renders
+  delete generatedSections.value[sectionIndex]
+  isFailed.value = false
+  try {
+    const res = await regenerateSection(props.reportId, sectionIndex)
+    if (res.success) {
+      emit('add-log', `Regenerating section ${sectionIndex}: ${res.data?.section_title || ''}`)
+      // Resume polling to catch the new agent_log entries
+      stopPolling()
+      startPolling()
+    } else {
+      emit('add-log', `Regenerate failed: ${res.error || 'Unknown error'}`)
+      regeneratingSections[sectionIndex] = false
+    }
+  } catch (e) {
+    emit('add-log', `Regenerate error: ${e.message}`)
+    regeneratingSections[sectionIndex] = false
   }
 }
 
@@ -589,7 +696,40 @@ const activeToolName = computed(() => {
   return null
 })
 
+let activeDecisionPathwaysRequest = 0
+
+const loadDecisionPathways = async ({ silent = false } = {}) => {
+  if (!props.reportId) {
+    decisionPathways.value = null
+    decisionPathwaysError.value = ''
+    return
+  }
+
+  const requestToken = ++activeDecisionPathwaysRequest
+  const targetReportId = props.reportId
+
+  if (!silent) {
+    isLoadingDecisionPathways.value = true
+  }
+
+  decisionPathwaysError.value = ''
+
+  try {
+    const res = await getDecisionPathways(targetReportId)
+    if (requestToken !== activeDecisionPathwaysRequest || targetReportId !== props.reportId) return
+    decisionPathways.value = res.data
+  } catch (e) {
+    if (requestToken !== activeDecisionPathwaysRequest || targetReportId !== props.reportId) return
+    decisionPathwaysError.value = e.message || 'Failed to build decision pathways'
+  } finally {
+    if (!silent && requestToken === activeDecisionPathwaysRequest && targetReportId === props.reportId) {
+      isLoadingDecisionPathways.value = false
+    }
+  }
+}
+
 // State
+const reportSurfaceMode = ref('report')
 const agentLogs = ref([])
 const consoleLogs = ref([])
 const agentLogLine = ref(0)
@@ -604,7 +744,9 @@ const isComplete = ref(false)
 const markdownCopied = ref(false)
 const isFailed = ref(false)
 const isRetrying = ref(false)
+const isRefreshing = ref(false)
 const isDownloading = ref(false)
+const regeneratingSections = reactive({}) // sectionIndex → true while regenerating
 const reportStatus = ref(null)
 const reportErrorDetails = ref(null)
 const reportErrorType = ref(null)
@@ -614,6 +756,9 @@ const leftPanel = ref(null)
 const rightPanel = ref(null)
 const logContent = ref(null)
 const showRawResult = reactive({})
+const decisionPathways = ref(null)
+const decisionPathwaysError = ref('')
+const isLoadingDecisionPathways = ref(false)
 
 // Toggle functions
 const toggleRawResult = (timestamp, event) => {
@@ -1907,6 +2052,39 @@ const reportFailureMessage = computed(() => {
   return reportErrorDetails.value?.message || reportStatus.value?.message || 'Report generation failed.'
 })
 
+const failedSectionIndex = computed(() => {
+  const explicitIndex = Number(reportErrorDetails.value?.section_index || 0)
+  if (Number.isInteger(explicitIndex) && explicitIndex > 0) {
+    return explicitIndex
+  }
+
+  const candidateTitles = []
+  const directTitle = String(reportErrorDetails.value?.section_title || '').trim()
+  if (directTitle) {
+    candidateTitles.push(directTitle)
+  }
+
+  const errorMessage = String(reportErrorDetails.value?.message || reportStatus.value?.message || '').trim()
+  const quotedTitleMatch = errorMessage.match(/章节《(.+?)》/)
+  if (quotedTitleMatch?.[1]) {
+    candidateTitles.push(quotedTitleMatch[1].trim())
+  }
+
+  if (reportOutline.value?.sections?.length) {
+    for (const title of candidateTitles) {
+      const matchedIndex = reportOutline.value.sections.findIndex(
+        (section) => String(section?.title || '').trim() === title
+      )
+      if (matchedIndex >= 0) {
+        return matchedIndex + 1
+      }
+    }
+  }
+
+  const activeIndex = Number(currentSectionIndex.value || 0)
+  return Number.isInteger(activeIndex) && activeIndex > 0 ? activeIndex : null
+})
+
 const hasMeaningfulFailureStatus = (status) => {
   return status === 'failed' || status === 'error'
 }
@@ -2207,7 +2385,8 @@ const getActionLabel = (action) => {
     'tool_call': 'Tool Call',
     'tool_result': 'Tool Result',
     'llm_response': 'LLM Response',
-    'report_complete': 'Complete'
+    'report_complete': 'Complete',
+    'section_regenerated': 'Section Regenerated'
   }
   return labels[action] || action
 }
@@ -2236,16 +2415,31 @@ const fetchReportStatus = async () => {
     reportErrorType.value = res.data.error_type || null
     isRetryable.value = res.data.retryable !== false
 
+    const activeRegeneratingSection = res.data.regenerating_section
+    if (activeRegeneratingSection) {
+      regeneratingSections[activeRegeneratingSection] = true
+      currentSectionIndex.value = activeRegeneratingSection
+    } else if (res.data.status !== 'generating' && res.data.status !== 'regenerating') {
+      // No section is actively regenerating per the backend; clear stale loading cursor
+      // (but only when the report is not in a full generation pass)
+      currentSectionIndex.value = null
+    }
+
     if (res.data.status === 'completed' && !isComplete.value) {
       isComplete.value = true
       isFailed.value = false
       currentSectionIndex.value = null
+      loadDecisionPathways({ silent: true })
       emit('update-status', 'completed')
-      stopPolling()
+      // Don't stop polling if a section regeneration is still in progress
+      if (Object.keys(regeneratingSections).length === 0) {
+        stopPolling()
+      }
       return
     }
 
-    if (hasMeaningfulFailureStatus(res.data.status) && !isFailed.value && !isComplete.value) {
+    if (hasMeaningfulFailureStatus(res.data.status) && !isFailed.value && !isComplete.value &&
+        Object.keys(regeneratingSections).length === 0) {
       isFailed.value = true
       emit('update-status', 'error')
       stopPolling()
@@ -2270,6 +2464,7 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'planning_complete' && log.details?.outline) {
             reportOutline.value = log.details.outline
+            loadDecisionPathways({ silent: true })
           }
           
           if (log.action === 'section_start') {
@@ -2283,6 +2478,7 @@ const fetchAgentLog = async () => {
               // 自动展开刚生成的章节
               expandedContent.value.add(log.section_index - 1)
               currentSectionIndex.value = null
+              loadDecisionPathways({ silent: true })
             }
           }
           
@@ -2291,6 +2487,7 @@ const fetchAgentLog = async () => {
             isFailed.value = false
             reportStatus.value = { ...(reportStatus.value || {}), status: 'completed' }
             currentSectionIndex.value = null
+            loadDecisionPathways({ silent: true })
             emit('update-status', 'completed')
             stopPolling()
           }
@@ -2309,6 +2506,23 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_start') {
             startTime.value = new Date(log.timestamp)
+          }
+
+          if (log.action === 'section_regenerated') {
+            const idx = log.section_index
+            if (idx) {
+              // Keep regeneratingSections[idx] alive to guard failure detection during the
+              // brief window when the backend is writing updated status files after
+              // agent.regenerate_section() returns. Clear it after 900ms to allow the
+              // next status poll to see the correct completed/failed state.
+              setTimeout(async () => {
+                await fetchReportStatus()
+                delete regeneratingSections[idx]
+                if (Object.keys(regeneratingSections).length === 0 && isComplete.value) {
+                  stopPolling()
+                }
+              }, 900)
+            }
           }
         })
         
@@ -2418,6 +2632,27 @@ const fetchConsoleLog = async () => {
   }
 }
 
+const refreshReportState = async () => {
+  if (!props.reportId || isRefreshing.value) return
+
+  isRefreshing.value = true
+  emit('add-log', `Manual refresh: ${props.reportId}`)
+
+  try {
+    stopPolling()
+    await fetchReportStatus()
+    await fetchAgentLog()
+    await fetchConsoleLog()
+    await loadDecisionPathways({ silent: true })
+
+    if (!isComplete.value) {
+      startPolling()
+    }
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
 const startPolling = () => {
   if (agentLogTimer || consoleLogTimer || reportStatusTimer) return
   
@@ -2450,6 +2685,7 @@ onMounted(() => {
   if (props.reportId) {
     addLog(`Report Agent initialized: ${props.reportId}`)
     startPolling()
+    loadDecisionPathways()
   }
 })
 
@@ -2459,6 +2695,8 @@ onUnmounted(() => {
 
 watch(() => props.reportId, (newId) => {
   if (newId) {
+    activeDecisionPathwaysRequest += 1
+    reportSurfaceMode.value = 'report'
     agentLogs.value = []
     consoleLogs.value = []
     agentLogLine.value = 0
@@ -2472,6 +2710,7 @@ watch(() => props.reportId, (newId) => {
     isComplete.value = false
     isFailed.value = false
     isRetrying.value = false
+    isRefreshing.value = false
     isDownloading.value = false
     markdownCopied.value = false
     reportStatus.value = null
@@ -2479,8 +2718,12 @@ watch(() => props.reportId, (newId) => {
     reportErrorType.value = null
     isRetryable.value = true
     startTime.value = null
+    decisionPathways.value = null
+    decisionPathwaysError.value = ''
+    isLoadingDecisionPathways.value = false
 
     startPolling()
+    loadDecisionPathways()
   }
 }, { immediate: true })
 </script>
@@ -2609,6 +2852,13 @@ watch(() => props.reportId, (newId) => {
   margin-bottom: 8px;
 }
 
+.failed-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .failed-icon {
   font-weight: 700;
   color: #CC0000;
@@ -2632,10 +2882,10 @@ watch(() => props.reportId, (newId) => {
   color: #991B1B;
 }
 
-.retry-btn {
+.retry-btn,
+.refresh-status-btn,
+.regen-failed-btn {
   padding: 5px 14px;
-  background: #CC0000;
-  color: #FFF;
   border: none;
   font-family: monospace;
   font-size: 0.78rem;
@@ -2643,11 +2893,29 @@ watch(() => props.reportId, (newId) => {
   letter-spacing: 0.04em;
 }
 
+.retry-btn {
+  background: #CC0000;
+  color: #FFF;
+}
+
+.refresh-status-btn,
+.regen-failed-btn {
+  background: #111827;
+  color: #FFF;
+}
+
 .retry-btn:hover:not(:disabled) {
   background: #AA0000;
 }
 
-.retry-btn:disabled {
+.refresh-status-btn:hover:not(:disabled),
+.regen-failed-btn:hover:not(:disabled) {
+  background: #000000;
+}
+
+.retry-btn:disabled,
+.refresh-status-btn:disabled,
+.regen-failed-btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -2728,43 +2996,54 @@ watch(() => props.reportId, (newId) => {
   gap: 8px;
 }
 
-.download-pdf-btn {
+.download-pdf-btn,
+.copy-md-btn,
+.report-refresh-btn {
   padding: 4px 12px;
   font-size: 11px;
   font-weight: 600;
   font-family: 'JetBrains Mono', monospace;
   letter-spacing: 0.04em;
-  color: #374151;
-  background: #F9FAFB;
-  border: 1px solid #D1D5DB;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.download-pdf-btn:hover:not(:disabled) {
+.download-pdf-btn,
+.copy-md-btn {
+  color: #374151;
+  background: #F9FAFB;
+  border: 1px solid #D1D5DB;
+}
+
+.report-refresh-btn {
+  color: #FFFFFF;
+  background: #111827;
+  border: 1px solid #111827;
+}
+
+.download-pdf-btn:hover:not(:disabled),
+.report-refresh-btn:hover:not(:disabled) {
   background: #111827;
   color: #FFFFFF;
   border-color: #111827;
 }
 
-.download-pdf-btn:disabled {
+.report-refresh-btn:hover:not(:disabled) {
+  background: #000000;
+  border-color: #000000;
+}
+
+.download-pdf-btn:disabled,
+.report-refresh-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 .copy-md-btn {
-  padding: 4px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: 0.04em;
   color: #374151;
   background: #F9FAFB;
   border: 1px solid #D1D5DB;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s ease;
 }
 
 .copy-md-btn:hover {
@@ -2844,6 +3123,37 @@ watch(() => props.reportId, (newId) => {
   width: 100%;
 }
 
+.report-surface-switcher {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.surface-tab {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #D1D5DB;
+  background: #FFFFFF;
+  color: #6B7280;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.surface-tab:hover {
+  color: #111827;
+  border-color: #9CA3AF;
+}
+
+.surface-tab--active {
+  background: #111827;
+  border-color: #111827;
+  color: #FFFFFF;
+}
+
 /* Sections List */
 .sections-list {
   display: flex;
@@ -2885,6 +3195,54 @@ watch(() => props.reportId, (newId) => {
 
 .collapse-icon.is-collapsed {
   transform: rotate(-90deg);
+}
+
+/* Section regeneration button */
+.regen-section-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: #4B5563;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  opacity: 1;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.regen-section-btn:hover:not(:disabled) {
+  color: #111827;
+  border-color: #9CA3AF;
+  background: #F9FAFB;
+}
+
+.regen-section-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.regen-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #6B7280;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.regen-spinner .spin {
+  animation: spin 1s linear infinite;
 }
 
 .section-number {

@@ -171,12 +171,26 @@
     </div>
 
     <!-- Bottom Info / Logs -->
-    <div class="system-logs">
+    <div class="system-logs" :class="{ expanded: logsExpanded }">
       <div class="log-header">
-        <span class="log-title">SYSTEM DASHBOARD</span>
-        <span class="log-id">{{ projectData?.project_id || 'NO_PROJECT' }}</span>
+        <div>
+          <div class="log-title-row">
+            <span class="log-title">SYSTEM DASHBOARD</span>
+            <span class="log-live-chip" :class="{ active: currentPhase < 2 }">{{ currentPhase < 2 ? 'LIVE' : 'READY' }}</span>
+          </div>
+          <div class="log-subtitle">{{ latestLogPreview }}</div>
+        </div>
+        <div class="log-header-meta">
+          <span class="log-id">{{ projectData?.project_id || 'NO_PROJECT' }}</span>
+          <button class="log-toggle" @click="logsExpanded = !logsExpanded">{{ logsExpanded ? 'Collapse' : 'Expand' }}</button>
+        </div>
       </div>
-      <div class="log-content" ref="logContent">
+      <div class="log-metrics">
+        <span>{{ systemLogs.length }} events</span>
+        <span>{{ graphStats.nodes }} nodes</span>
+        <span>{{ graphStats.edges }} edges</span>
+      </div>
+      <div v-show="logsExpanded" class="log-content" ref="logContent">
         <div class="log-line" v-for="(log, idx) in systemLogs" :key="idx">
           <span class="log-time">{{ log.time }}</span>
           <span class="log-msg">{{ log.msg }}</span>
@@ -205,6 +219,7 @@ const props = defineProps({
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
 const creatingSimulation = ref(false)
+const logsExpanded = ref(true)
 let createSimulationRequestToken = 0
 let isUnmounted = false
 
@@ -282,6 +297,11 @@ const graphStats = computed(() => {
   return { nodes, edges, types }
 })
 
+const latestLogPreview = computed(() => {
+  const latest = props.systemLogs?.[props.systemLogs.length - 1]?.msg
+  return latest || 'Waiting for graph build events...'
+})
+
 const formatDate = (dateStr) => {
   if (!dateStr) return '--:--:--'
   const d = new Date(dateStr)
@@ -304,6 +324,7 @@ onUnmounted(() => {
 
 // Auto-scroll logs
 watch(() => props.systemLogs.length, () => {
+  logsExpanded.value = true
   nextTick(() => {
     if (logContent.value) {
       logContent.value.scrollTop = logContent.value.scrollHeight
@@ -685,29 +706,97 @@ watch(() => props.systemLogs.length, () => {
 
 /* System Logs */
 .system-logs {
-  background: #000;
+  position: sticky;
+  bottom: 0;
+  background: rgba(3, 7, 18, 0.96);
   color: #DDD;
   padding: 16px;
   font-family: 'JetBrains Mono', monospace;
-  border-top: 1px solid #222;
+  border-top: 1px solid #1F2937;
   flex-shrink: 0;
+  z-index: 5;
+  box-shadow: 0 -12px 30px rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(12px);
 }
 
 .log-header {
   display: flex;
   justify-content: space-between;
-  border-bottom: 1px solid #333;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
+  gap: 16px;
+  border-bottom: 1px solid #1F2937;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.log-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-title {
   font-size: 10px;
-  color: #888;
+  color: #9CA3AF;
+}
+
+.log-live-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  color: #93C5FD;
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.log-live-chip.active {
+  color: #FDBA74;
+  background: rgba(249, 115, 22, 0.16);
+}
+
+.log-subtitle {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #6B7280;
+  line-height: 1.5;
+}
+
+.log-header-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.log-id {
+  font-size: 10px;
+  color: #94A3B8;
+}
+
+.log-toggle {
+  border: 1px solid #374151;
+  background: transparent;
+  color: #E5E7EB;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.log-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: #9CA3AF;
 }
 
 .log-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  height: 80px; /* Approx 4 lines visible */
+  gap: 6px;
+  max-height: 180px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -717,7 +806,7 @@ watch(() => props.systemLogs.length, () => {
 }
 
 .log-content::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #334155;
   border-radius: 2px;
 }
 
@@ -729,12 +818,12 @@ watch(() => props.systemLogs.length, () => {
 }
 
 .log-time {
-  color: #666;
+  color: #64748B;
   min-width: 75px;
 }
 
 .log-msg {
-  color: #CCC;
+  color: #E5E7EB;
   word-break: break-all;
 }
 </style>

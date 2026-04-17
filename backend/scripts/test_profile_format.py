@@ -30,7 +30,7 @@ def _check_fields(actual_fields, required_fields, label):
 
 
 def test_profile_formats():
-    """Validate the exported profile files and return success/failure."""
+    """Validate the exported profile files and fail loudly when the export drifts."""
     print("=" * 60)
     print("OASIS Profile格式测试")
     print("=" * 60)
@@ -149,7 +149,8 @@ def test_profile_formats():
     else:
         print("测试通过!")
     print("=" * 60)
-    return not errors
+
+    assert not errors, "Profile export format drifted: " + "; ".join(errors)
 
 
 def show_expected_formats():
@@ -188,7 +189,12 @@ def show_expected_formats():
 
 
 if __name__ == "__main__":
-    success = test_profile_formats()
+    try:
+        test_profile_formats()
+        success = True
+    except AssertionError as exc:
+        print(f"\nAssertion failed: {exc}")
+        success = False
     show_expected_formats()
     sys.exit(0 if success else 1)
 

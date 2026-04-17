@@ -5,6 +5,9 @@
     step-name="Graph Build"
     :status-class="statusClass"
     :status-text="statusText"
+    :show-refresh="true"
+    :refresh-disabled="loading || graphLoading"
+    @refresh="handleRefresh"
   >
     <template #left>
       <GraphPanel
@@ -337,6 +340,15 @@ const refreshGraph = () => {
     addLog('Manual graph refresh triggered.')
     loadGraph(projectData.value.graph_id)
   }
+}
+
+const handleRefresh = async () => {
+  addLog('Manual view refresh triggered.')
+  if (currentProjectId.value && currentProjectId.value !== 'new') {
+    await loadProject()
+    return
+  }
+  refreshGraph()
 }
 
 const stopPolling = () => {

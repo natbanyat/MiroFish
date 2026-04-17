@@ -172,6 +172,36 @@
                 </div>
               </div>
 
+              <div class="seed-text-card" :class="{ active: seedText.trim().length > 0 }">
+                <div class="seed-text-header">
+                  <div>
+                    <div class="seed-text-title">Paste reality seed text</div>
+                    <div class="seed-text-subtitle">Direct text works too. We wrap it into a .txt seed behind the scenes.</div>
+                  </div>
+                  <button
+                    v-if="seedText.trim()"
+                    class="seed-text-clear"
+                    @click="seedText = ''"
+                    :disabled="loading"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <textarea
+                  v-model="seedText"
+                  class="seed-textarea"
+                  placeholder="Paste notes, a briefing, a transcript, or any raw reality seed here..."
+                  rows="6"
+                  :disabled="loading"
+                ></textarea>
+
+                <div class="seed-text-footer">
+                  <span>{{ seedTextStats }}</span>
+                  <span v-if="seedText.trim()">Will upload as pasted-reality-seed.txt</span>
+                </div>
+              </div>
+
               <!-- Seed controls: saved dropdown + generate new -->
               <div class="seed-controls">
                 <!-- Saved seeds dropdown -->
@@ -306,6 +336,7 @@ const formData = ref({
 
 // 文件列表
 const files = ref([])
+const seedText = ref('')
 
 // 状态
 const loading = ref(false)
@@ -316,8 +347,20 @@ const isDragOver = ref(false)
 const fileInput = ref(null)
 
 // 计算属性:是否可以提交
+const hasRealitySeed = computed(() => {
+  return files.value.length > 0 || seedText.value.trim().length > 0
+})
+
 const canSubmit = computed(() => {
-  return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
+  return formData.value.simulationRequirement.trim() !== '' && hasRealitySeed.value
+})
+
+const seedTextStats = computed(() => {
+  const text = seedText.value.trim()
+  const chars = text.length
+  const words = text ? text.split(/\s+/).filter(Boolean).length : 0
+  if (!chars) return 'No pasted text yet'
+  return `${chars} chars · ${words} words`
 })
 
 // 触发文件选择
@@ -364,6 +407,17 @@ const addFiles = (newFiles) => {
 // 移除文件
 const removeFile = (index) => {
   files.value.splice(index, 1)
+}
+
+const buildPendingFiles = () => {
+  const pendingFiles = [...files.value]
+
+  if (seedText.value.trim()) {
+    const blob = new Blob([seedText.value.trim()], { type: 'text/plain' })
+    pendingFiles.push(new File([blob], 'pasted-reality-seed.txt', { type: 'text/plain' }))
+  }
+
+  return pendingFiles
 }
 
 // Model router panel
@@ -512,10 +566,13 @@ const scrollToBottom = () => {
 // 开始模拟 - 立即跳转，API调用在Process页面进行
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
+
+  const pendingFiles = buildPendingFiles()
+  if (!pendingFiles.length) return
   
   // 存储待上传的数据
   import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
-    setPendingUpload(files.value, formData.value.simulationRequirement)
+    setPendingUpload(pendingFiles, formData.value.simulationRequirement)
     
     // 立即跳转到Process页面（使用特殊标识表示新建项目）
     router.push({
@@ -1007,6 +1064,78 @@ const startSimulation = () => {
   margin: 0 10px;
 }
 
+.seed-text-card {
+  margin-top: 12px;
+  border: 1px solid #E5E5E5;
+  background: #FAFAFA;
+  padding: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.seed-text-card.active {
+  border-color: #FF4500;
+  box-shadow: inset 0 0 0 1px rgba(255, 69, 0, 0.08);
+}
+
+.seed-text-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.seed-text-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.seed-text-subtitle {
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: #888;
+  line-height: 1.5;
+}
+
+.seed-text-clear {
+  border: 1px solid #DDD;
+  background: #FFF;
+  color: #666;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  height: fit-content;
+}
+
+.seed-textarea {
+  width: 100%;
+  min-height: 140px;
+  border: 1px solid #DDD;
+  background: #FFF;
+  padding: 12px 14px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: #222;
+}
+
+.seed-textarea:focus {
+  outline: none;
+  border-color: #FF4500;
+}
+
+.seed-text-footer {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: #888;
+}
+
 /* Seed controls wrapper */
 .seed-controls {
   display: flex;
@@ -1315,6 +1444,12 @@ const startSimulation = () => {
   .hero-logo {
     max-width: 200px;
     margin-bottom: 20px;
+  }
+
+  .seed-text-header,
+  .seed-text-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

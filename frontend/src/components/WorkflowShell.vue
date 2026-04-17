@@ -20,6 +20,14 @@
       </div>
 
       <div class="header-right">
+        <button
+          v-if="showRefresh"
+          class="header-refresh-btn"
+          :disabled="refreshDisabled"
+          @click="$emit('refresh')"
+        >
+          {{ refreshLabel }}
+        </button>
         <div class="workflow-step">
           <span class="step-num">Step {{ currentStep }}/5</span>
           <span class="step-name">{{ stepName }}</span>
@@ -80,6 +88,18 @@ const props = defineProps({
     type: [String, Array, Object],
     default: ''
   },
+  showRefresh: {
+    type: Boolean,
+    default: false
+  },
+  refreshDisabled: {
+    type: Boolean,
+    default: false
+  },
+  refreshLabel: {
+    type: String,
+    default: 'Refresh'
+  },
   viewModes: {
     type: Array,
     default: () => ['graph', 'split', 'workbench']
@@ -94,7 +114,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['update:modelValue'])
+defineEmits(['update:modelValue', 'refresh'])
 
 const router = useRouter()
 
@@ -113,6 +133,7 @@ const rightPanelStyle = computed(() => {
 
 <style scoped>
 .workflow-shell {
+  --stage-nav-clearance: 96px;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -177,6 +198,28 @@ const rightPanelStyle = computed(() => {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.header-refresh-btn {
+  border: 1px solid #E5E7EB;
+  background: #FFF;
+  color: #111827;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.header-refresh-btn:hover:not(:disabled) {
+  border-color: #D1D5DB;
+  background: #F9FAFB;
+}
+
+.header-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .workflow-step {
@@ -244,10 +287,13 @@ const rightPanelStyle = computed(() => {
   display: flex;
   position: relative;
   overflow: hidden;
+  padding-bottom: var(--stage-nav-clearance);
+  box-sizing: border-box;
 }
 
 .panel-wrapper {
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease, transform 0.3s ease;
   will-change: width, opacity, transform;
@@ -255,5 +301,34 @@ const rightPanelStyle = computed(() => {
 
 .panel-wrapper.left {
   border-right: 1px solid #EAEAEA;
+}
+
+@media (max-width: 1100px) {
+  .workflow-shell {
+    --stage-nav-clearance: 132px;
+  }
+}
+
+@media (max-width: 720px) {
+  .workflow-shell {
+    --stage-nav-clearance: 156px;
+  }
+
+  .app-header {
+    padding: 0 16px;
+  }
+
+  .header-center {
+    position: static;
+    transform: none;
+  }
+
+  .header-right {
+    gap: 10px;
+  }
+
+  .workflow-step {
+    display: none;
+  }
 }
 </style>
